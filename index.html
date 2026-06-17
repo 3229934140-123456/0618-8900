@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>问卷设计与收集系统</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>📋 问卷设计与收集系统</h1>
+            <nav class="nav">
+                <a href="index.html" class="active">我的问卷</a>
+                <a href="editor.html">新建问卷</a>
+            </nav>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2>我的问卷</h2>
+                <button class="btn btn-primary" onclick="window.location.href='editor.html'">
+                    + 创建问卷
+                </button>
+            </div>
+        </div>
+
+        <div id="surveyList" class="survey-list"></div>
+
+        <div id="emptyState" class="card empty-state" style="display: none;">
+            <div class="icon">📝</div>
+            <h3>还没有问卷</h3>
+            <p>点击上方按钮创建你的第一份问卷</p>
+        </div>
+    </div>
+
+    <div id="deleteModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>确认删除</h2>
+                <button class="modal-close" onclick="closeDeleteModal()">&times;</button>
+            </div>
+            <p>确定要删除这份问卷吗？所有答卷数据也将被删除，此操作不可恢复。</p>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeDeleteModal()">取消</button>
+                <button class="btn btn-danger" onclick="confirmDelete()">确认删除</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="shareModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>分享问卷</h2>
+                <button class="modal-close" onclick="closeShareModal()">&times;</button>
+            </div>
+            <div class="tabs">
+                <div class="tab active" onclick="switchShareTab('link')">分享链接</div>
+                <div class="tab" onclick="switchShareTab('embed')">嵌入代码</div>
+            </div>
+            <div id="linkTab" class="tab-content active">
+                <label class="form-label">答题链接</label>
+                <div class="share-link">
+                    <input type="text" id="shareUrl" readonly>
+                    <button class="btn btn-primary btn-sm" onclick="copyShareUrl()">复制</button>
+                </div>
+                <p style="font-size: 13px; color: #888; margin-top: 8px;">
+                    将此链接分享给答题者，他们可以通过链接直接访问问卷
+                </p>
+            </div>
+            <div id="embedTab" class="tab-content">
+                <label class="form-label">iframe 嵌入代码</label>
+                <div class="embed-code" id="embedCode"></div>
+                <button class="btn btn-primary btn-sm" onclick="copyEmbedCode()">复制代码</button>
+                <p style="font-size: 13px; color: #888; margin-top: 8px;">
+                    将此代码嵌入到你的网站或博客中，用户可以直接在页面上填写问卷
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/store.js"></script>
+    <script>
+        let deleteSurveyId = null;
+        let shareSurveyId = null;
+
+        function loadSurveys() {
+            const surveys = SurveyStore.getSurveys();
+            const listEl = document.getElementById('surveyList');
+            const emptyEl = document.getElementById('emptyState');
+
+            if (surveys.length === 0) {
+                listEl.innerHTML = '';
+                emptyEl.style.display = 'block';
+                return;
+            }
+
+            emptyEl.style.display = 'none';
+            listEl.innerHTML = surveys.map(survey => {
+                const status = SurveyStore.getSurveyStatus(survey);
+                const count = SurveyStore.getResponseCount(survey.id);
+                const statusColor = {
+                    active: '#52c41a',
+                    pending: '#faad14',
+                    ended: '#999',
+                    full: '#ff4d4f'
+                }[status.status];
+
+                return `
+                    <div class="survey-card">
+                        <h3>${escapeHtml(survey.title)}</h3>
+                        <p class="desc">${escapeHtml(survey.description || '暂无描述')}</p>
+                        <div class="meta">
+                            <span style="color: ${statusColor};">● ${status.label}</span>
+                            <span>${count} 份答卷</span>
+                        </div>
+                        <div class="actions">
+                            <button class="btn btn-secondary btn-sm" onclick="editSurvey('${survey.id}')">编辑</button>
+                            <button class="btn btn-primary btn-sm" onclick="viewStats('${survey.id}')">统计</button>
+                            <button class="btn btn-success btn-sm" onclick="shareSurvey('${survey.id}')">分享</button>
+                            <button class="btn btn-danger btn-sm" onclick="deleteSurvey('${survey.id}')">删除</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function editSurvey(id) {
+            window.location.href = 'editor.html?id=' + id;
+        }
+
+        function viewStats(id) {
+            window.location.href = 'stats.html?id=' + id;
+        }
+
+        function shareSurvey(id) {
+            shareSurveyId = id;
+            const shareUrl = SurveyStore.getShareUrl(id);
+            const embedCode = SurveyStore.getEmbedCode(id);
+            document.getElementById('shareUrl').value = shareUrl;
+            document.getElementById('embedCode').textContent = embedCode;
+            document.getElementById('shareModal').classList.remove('hidden');
+        }
+
+        function closeShareModal() {
+            document.getElementById('shareModal').classList.add('hidden');
+            shareSurveyId = null;
+        }
+
+        function switchShareTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tab + 'Tab').classList.add('active');
+        }
+
+        function copyShareUrl() {
+            const input = document.getElementById('shareUrl');
+            input.select();
+            document.execCommand('copy');
+            alert('链接已复制到剪贴板');
+        }
+
+        function copyEmbedCode() {
+            const code = document.getElementById('embedCode').textContent;
+            const textarea = document.createElement('textarea');
+            textarea.value = code;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            alert('嵌入代码已复制到剪贴板');
+        }
+
+        function deleteSurvey(id) {
+            deleteSurveyId = id;
+            document.getElementById('deleteModal').classList.remove('hidden');
+        }
+
+        function closeDeleteModal() {
+            document.getElementById('deleteModal').classList.add('hidden');
+            deleteSurveyId = null;
+        }
+
+        function confirmDelete() {
+            if (deleteSurveyId) {
+                SurveyStore.deleteSurvey(deleteSurveyId);
+                closeDeleteModal();
+                loadSurveys();
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.appendChild(document.createTextNode(text));
+            return div.innerHTML;
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            SurveyStore.initSampleData();
+            loadSurveys();
+        });
+
+        document.getElementById('deleteModal').addEventListener('click', function(e) {
+            if (e.target === this) closeDeleteModal();
+        });
+
+        document.getElementById('shareModal').addEventListener('click', function(e) {
+            if (e.target === this) closeShareModal();
+        });
+    </script>
+</body>
+</html>

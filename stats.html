@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>统计分析 - 问卷设计与收集系统</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>📊 统计分析</h1>
+            <nav class="nav">
+                <a href="index.html">我的问卷</a>
+                <a href="editor.html">新建问卷</a>
+            </nav>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h2 id="surveyTitle">加载中...</h2>
+                <p id="surveyDesc" style="color: #888; margin-top: 4px;"></p>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn btn-secondary" onclick="window.location.href='index.html'">返回</button>
+                <button class="btn btn-success" onclick="exportData()">📥 导出Excel</button>
+            </div>
+        </div>
+
+        <div class="stats-grid" id="statsGrid"></div>
+
+        <div class="card">
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('charts')">统计图表</div>
+                <div class="tab" onclick="switchTab('responses')">答卷详情</div>
+            </div>
+
+            <div id="chartsTab" class="tab-content active">
+                <div id="chartsContainer"></div>
+            </div>
+
+            <div id="responsesTab" class="tab-content">
+                <div class="filter-section">
+                    <h3 style="margin-bottom: 16px; font-size: 16px;">筛选条件</h3>
+                    <div class="filter-row">
+                        <div class="form-group">
+                            <label class="form-label">按题目筛选</label>
+                            <select class="form-select" id="filterQuestion" onchange="updateFilterOptions()">
+                                <option value="">全部答卷</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="filterValueGroup" style="display: none;">
+                            <label class="form-label">选项值</label>
+                            <select class="form-select" id="filterValue" onchange="applyFilter()">
+                                <option value="">请选择</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="align-self: flex-end;">
+                            <button class="btn btn-secondary" onclick="clearFilter()">清除筛选</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="responsesContainer" style="overflow-x: auto;"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="responseDetailModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2>答卷详情</h2>
+                <button class="modal-close" onclick="closeResponseDetail()">&times;</button>
+            </div>
+            <div id="responseDetailContent"></div>
+        </div>
+    </div>
+
+    <script src="js/store.js"></script>
+    <script>
+        let survey = null;
+        let stats = null;
+        let filteredResponses = [];
+        let currentFilter = null;
+
+        function getUrlParam(name) {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(name);
+        }
+
+        function init() {
+            const surveyId = getUrlParam('id');
+            if (!surveyId) {
+                alert('问卷不存在');
+                window.location.href = 'index.html';
+                return;
+            }
+
+            survey = SurveyStore.getSurvey(surveyId);
+            if (!survey) {
+                alert('问卷不存在');
+                window.location.href = 'index.html';
+                return;
+            }
+
+            document.getElementById('surveyTitle').textContent = survey.title;
+            document.getElementById('surveyDesc').textContent = survey.description || '';
+
+            stats = SurveyStore.calculateStats(surveyId);
+            filteredResponses = SurveyStore.getSurveyResponses(surveyId);
+
+            renderStatsGrid();
+            renderCharts();
+            populateFilterQuestion();
+            renderResponses();
+        }
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tab + 'Tab').classList.add('active');
+        }
+
+        function renderStatsGrid() {
+            const responses = SurveyStore.getSurveyResponses(survey.id);
+            const status = SurveyStore.getSurveyStatus(survey);
+            
+            let completionRate = 0;
+            if (responses.length > 0) {
+                const answeredQuestions = responses.filter(r => {
+                    let answered = 0;
+                    survey.questions.forEach(q => {
+                        if (r.answers[q.id] !== undefined && r.answers[q.id] !== null && r.answers[q.id] !== '') {
+                            answered++;
+                        }
+                    });
+                    return answered > 0;
+                }).length;
+                completionRate = Math.round((answeredQuestions / responses.length) * 100);
+            }
+
+            const avgQuestions = responses.length > 0
+                ? (responses.reduce((sum, r) => {
+                    let count = 0;
+                    survey.questions.forEach(q => {
+                        if (r.answers[q.id] !== undefined && r.answers[q.id] !== null && r.answers[q.id] !== '') {
+                            count++;
+                        }
+                    });
+                    return sum + count;
+                }, 0) / responses.length).toFixed(1)
+                : 0;
+
+            const html = `
+                <div class="stat-card">
+                    <h3>总答卷数</h3>
+                    <div class="value primary">${responses.length}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>题目数量</h3>
+                    <div class="value">${survey.questions.length}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>问卷状态</h3>
+                    <div class="value" style="font-size: 20px; color: ${status.status === 'active' ? '#52c41a' : '#999'};">
+                        ${status.label}
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <h3>平均答题数</h3>
+                    <div class="value">${avgQuestions}</div>
+                </div>
+            `;
+
+            document.getElementById('statsGrid').innerHTML = html;
+        }
+
+        function renderCharts() {
+            const container = document.getElementById('chartsContainer');
+            let html = '';
+
+            survey.questions.forEach((question, index) => {
+                const qStats = stats.questions[question.id];
+                if (!qStats) return;
+
+                html += `<div class="chart-container">
+                    <h3>Q${index + 1}. ${escapeHtml(question.title)} 
+                        <span style="font-size: 13px; color: #999; font-weight: normal;">
+                            (${qStats.totalAnswered} 人回答)
+                        </span>
+                    </h3>`;
+
+                if (['single', 'multiple', 'dropdown'].includes(question.type)) {
+                    html += renderBarChart(qStats);
+                } else if (question.type === 'rating') {
+                    html += renderRatingChart(qStats, question);
+                } else if (question.type === 'matrix') {
+                    html += renderMatrixChart(qStats, question);
+                } else if (question.type === 'text') {
+                    html += renderTextAnswers(qStats);
+                }
+
+                html += '</div>';
+            });
+
+            container.innerHTML = html || '<p style="color: #999; text-align: center; padding: 40px;">暂无数据</p>';
+        }
+
+        function renderBarChart(qStats) {
+            const maxCount = Math.max(...Object.values(qStats.options), 1);
+            
+            let html = '<div class="bar-chart">';
+            
+            Object.keys(qStats.options).forEach(option => {
+                const count = qStats.options[option];
+                const percentage = qStats.percentages[option];
+                const width = (count / maxCount) * 100;
+
+                html += `
+                    <div class="bar-item">
+                        <div class="bar-label">${escapeHtml(option)}</div>
+                        <div class="bar-track">
+                            <div class="bar-fill" style="width: ${width}%;"></div>
+                        </div>
+                        <div class="bar-value">${count} (${percentage}%)</div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            return html;
+        }
+
+        function renderRatingChart(qStats, question) {
+            const maxRating = question.maxRating || 5;
+            const maxCount = Math.max(...Object.values(qStats.distribution), 1);
+
+            let html = `
+                <div style="margin-bottom: 20px; text-align: center;">
+                    <span style="font-size: 14px; color: #666;">平均评分</span>
+                    <div style="font-size: 48px; font-weight: 700; color: #fadb14; margin: 8px 0;">
+                        ${qStats.average}
+                    </div>
+                    <div style="color: #999; font-size: 13px;">满分 ${maxRating} 分</div>
+                </div>
+                <div class="bar-chart">
+            `;
+
+            for (let i = 1; i <= maxRating; i++) {
+                const count = qStats.distribution[i] || 0;
+                const percentage = qStats.totalAnswered > 0
+                    ? Math.round((count / qStats.totalAnswered) * 100)
+                    : 0;
+                const width = (count / maxCount) * 100;
+
+                html += `
+                    <div class="bar-item">
+                        <div class="bar-label">${i} 星</div>
+                        <div class="bar-track">
+                            <div class="bar-fill" style="width: ${width}%; background: linear-gradient(90deg, #fadb14, #faad14);"></div>
+                        </div>
+                        <div class="bar-value">${count} (${percentage}%)</div>
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function renderMatrixChart(qStats, question) {
+            let html = '<table class="matrix-table" style="margin-top: 12px;">';
+            html += '<thead><tr><th></th>';
+            question.columns.forEach(col => {
+                html += `<th>${escapeHtml(col)}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+
+            question.rows.forEach(row => {
+                html += `<tr><td>${escapeHtml(row)}</td>`;
+                question.columns.forEach(col => {
+                    const count = qStats.rows[row]?.[col] || 0;
+                    html += `<td>${count}</td>`;
+                });
+                html += '</tr>';
+            });
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function renderTextAnswers(qStats) {
+            if (qStats.answers.length === 0) {
+                return '<p style="color: #999;">暂无回答</p>';
+            }
+
+            let html = `<div style="max-height: 300px; overflow-y: auto;">`;
+            qStats.answers.forEach((answer, i) => {
+                html += `
+                    <div style="padding: 12px; background: #fafafa; border-radius: 8px; margin-bottom: 8px;">
+                        <div style="font-size: 12px; color: #999; margin-bottom: 4px;">回答 ${i + 1}</div>
+                        <div style="color: #333;">${escapeHtml(answer)}</div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            return html;
+        }
+
+        function populateFilterQuestion() {
+            const select = document.getElementById('filterQuestion');
+            const optionQuestions = survey.questions.filter(q => 
+                ['single', 'multiple', 'dropdown'].includes(q.type)
+            );
+
+            optionQuestions.forEach((q, i) => {
+                const option = document.createElement('option');
+                option.value = q.id;
+                option.textContent = `Q${survey.questions.indexOf(q) + 1}: ${q.title.substring(0, 30)}`;
+                select.appendChild(option);
+            });
+        }
+
+        function updateFilterOptions() {
+            const questionId = document.getElementById('filterQuestion').value;
+            const valueGroup = document.getElementById('filterValueGroup');
+            const valueSelect = document.getElementById('filterValue');
+
+            if (!questionId) {
+                valueGroup.style.display = 'none';
+                currentFilter = null;
+                filteredResponses = SurveyStore.getSurveyResponses(survey.id);
+                renderResponses();
+                return;
+            }
+
+            const question = survey.questions.find(q => q.id === questionId);
+            if (!question) return;
+
+            valueGroup.style.display = 'block';
+            valueSelect.innerHTML = '<option value="">请选择</option>';
+            
+            question.options.forEach(opt => {
+                const option = document.createElement('option');
+                option.value = opt;
+                option.textContent = opt;
+                valueSelect.appendChild(option);
+            });
+        }
+
+        function applyFilter() {
+            const questionId = document.getElementById('filterQuestion').value;
+            const value = document.getElementById('filterValue').value;
+
+            if (!questionId || !value) {
+                filteredResponses = SurveyStore.getSurveyResponses(survey.id);
+                currentFilter = null;
+            } else {
+                currentFilter = { questionId, value };
+                filteredResponses = SurveyStore.filterResponses(survey.id, {
+                    [questionId]: { type: 'equals', value }
+                });
+            }
+
+            renderResponses();
+        }
+
+        function clearFilter() {
+            document.getElementById('filterQuestion').value = '';
+            document.getElementById('filterValue').value = '';
+            document.getElementById('filterValueGroup').style.display = 'none';
+            currentFilter = null;
+            filteredResponses = SurveyStore.getSurveyResponses(survey.id);
+            renderResponses();
+        }
+
+        function renderResponses() {
+            const container = document.getElementById('responsesContainer');
+
+            if (filteredResponses.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div class="icon">📋</div><h3>暂无答卷</h3><p>还没有用户提交答卷</p></div>';
+                return;
+            }
+
+            let html = `<table class="responses-table">
+                <thead>
+                    <tr>
+                        <th style="width: 50px;">#</th>
+                        <th>提交时间</th>
+                        ${survey.questions.slice(0, 4).map(q => 
+                            `<th>${escapeHtml(q.title.substring(0, 15))}</th>`
+                        ).join('')}
+                        <th style="width: 100px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+            `;
+
+            filteredResponses.forEach((response, index) => {
+                html += `<tr>
+                    <td>${index + 1}</td>
+                    <td>${new Date(response.submittedAt).toLocaleString('zh-CN')}</td>
+                `;
+
+                survey.questions.slice(0, 4).forEach(q => {
+                    const answer = response.answers[q.id];
+                    let display = '-';
+                    if (answer !== undefined && answer !== null && answer !== '') {
+                        if (Array.isArray(answer)) {
+                            display = answer.join(', ');
+                        } else if (typeof answer === 'object') {
+                            display = Object.values(answer).join(', ');
+                        } else {
+                            display = String(answer);
+                        }
+                        if (display.length > 20) {
+                            display = display.substring(0, 20) + '...';
+                        }
+                    }
+                    html += `<td>${escapeHtml(display)}</td>`;
+                });
+
+                html += `
+                    <td>
+                        <button class="btn btn-secondary btn-sm" onclick="viewResponseDetail('${response.id}')">
+                            查看
+                        </button>
+                    </td>
+                </tr>`;
+            });
+
+            html += '</tbody></table>';
+            html += `<div style="margin-top: 16px; color: #888; font-size: 13px;">
+                共 ${filteredResponses.length} 条答卷
+                ${currentFilter ? '（已筛选）' : ''}
+            </div>`;
+
+            container.innerHTML = html;
+        }
+
+        function viewResponseDetail(responseId) {
+            const response = SurveyStore.getResponse(responseId);
+            if (!response) return;
+
+            let html = `
+                <p style="margin-bottom: 16px; color: #888;">
+                    提交时间：${new Date(response.submittedAt).toLocaleString('zh-CN')}
+                </p>
+            `;
+
+            survey.questions.forEach((question, index) => {
+                const answer = response.answers[question.id];
+                let displayAnswer = '未回答';
+                
+                if (answer !== undefined && answer !== null && answer !== '') {
+                    if (Array.isArray(answer)) {
+                        displayAnswer = answer.join('、');
+                    } else if (typeof answer === 'object' && question.type === 'matrix') {
+                        displayAnswer = Object.entries(answer)
+                            .map(([row, val]) => `${row}: ${val}`)
+                            .join('；');
+                    } else if (question.type === 'rating') {
+                        displayAnswer = answer + ' 分';
+                    } else {
+                        displayAnswer = String(answer);
+                    }
+                }
+
+                html += `
+                    <div style="margin-bottom: 16px; padding: 12px; background: #fafafa; border-radius: 8px;">
+                        <div style="font-weight: 500; margin-bottom: 8px;">
+                            Q${index + 1}. ${escapeHtml(question.title)}
+                        </div>
+                        <div style="color: #666;">${escapeHtml(displayAnswer)}</div>
+                    </div>
+                `;
+            });
+
+            document.getElementById('responseDetailContent').innerHTML = html;
+            document.getElementById('responseDetailModal').classList.remove('hidden');
+        }
+
+        function closeResponseDetail() {
+            document.getElementById('responseDetailModal').classList.add('hidden');
+        }
+
+        function exportData() {
+            const csvContent = SurveyStore.exportToCSV(survey.id, filteredResponses);
+            if (!csvContent) {
+                alert('导出失败');
+                return;
+            }
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `${survey.title}_答卷数据.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            alert('导出成功！\n\n说明：CSV格式可直接用Excel打开。如需标准Excel格式，可在Excel中"另存为" .xlsx 格式。');
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.appendChild(document.createTextNode(text));
+            return div.innerHTML;
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            init();
+        });
+
+        document.getElementById('responseDetailModal').addEventListener('click', function(e) {
+            if (e.target === this) closeResponseDetail();
+        });
+    </script>
+</body>
+</html>

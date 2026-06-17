@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>问卷编辑器 - 问卷设计与收集系统</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>📝 问卷编辑器</h1>
+            <nav class="nav">
+                <a href="index.html">我的问卷</a>
+                <a href="editor.html" class="active">新建问卷</a>
+            </nav>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="card">
+            <div class="form-group">
+                <label class="form-label">问卷标题</label>
+                <input type="text" class="form-input" id="surveyTitle" placeholder="请输入问卷标题" style="font-size: 18px; padding: 14px;">
+            </div>
+            <div class="form-group">
+                <label class="form-label">问卷描述</label>
+                <textarea class="form-textarea" id="surveyDesc" placeholder="请输入问卷描述，介绍问卷的目的和注意事项"></textarea>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-bottom: 16px;">添加题目</h3>
+            <div class="toolbar">
+                <button class="question-type-btn" onclick="addQuestion('single')">
+                    ⚪ 单选题
+                </button>
+                <button class="question-type-btn" onclick="addQuestion('multiple')">
+                    ☑️ 多选题
+                </button>
+                <button class="question-type-btn" onclick="addQuestion('dropdown')">
+                    ▼ 下拉选择
+                </button>
+                <button class="question-type-btn" onclick="addQuestion('text')">
+                    ✏️ 文本填空
+                </button>
+                <button class="question-type-btn" onclick="addQuestion('rating')">
+                    ⭐ 评分量表
+                </button>
+                <button class="question-type-btn" onclick="addQuestion('matrix')">
+                    🔲 矩阵题
+                </button>
+            </div>
+        </div>
+
+        <div id="questionsContainer"></div>
+
+        <div id="emptyQuestions" class="card empty-state">
+            <div class="icon">❓</div>
+            <h3>还没有题目</h3>
+            <p>点击上方按钮添加题目</p>
+        </div>
+
+        <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <span id="questionCount" style="color: #888;">共 0 道题</span>
+            </div>
+            <div style="display: flex; gap: 12px;">
+                <button class="btn btn-secondary" onclick="openSettingsModal()">⚙️ 设置</button>
+                <button class="btn btn-secondary" onclick="previewSurvey()">预览</button>
+                <button class="btn btn-primary" onclick="saveSurvey()">保存问卷</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="settingsModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2>问卷设置</h2>
+                <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">开始时间</label>
+                <input type="datetime-local" class="form-input" id="settingStartTime">
+                <span style="font-size: 12px; color: #999;">不填表示立即开始</span>
+            </div>
+            <div class="form-group">
+                <label class="form-label">截止时间</label>
+                <input type="datetime-local" class="form-input" id="settingEndTime">
+                <span style="font-size: 12px; color: #999;">不填表示不限制</span>
+            </div>
+            <div class="form-group">
+                <label class="form-label">答题人数上限</label>
+                <input type="number" class="form-input" id="settingMaxResponses" min="0" placeholder="0 表示不限制">
+                <span style="font-size: 12px; color: #999;">设置为 0 表示不限制人数</span>
+            </div>
+            <div class="form-group">
+                <label class="form-label">访问密码</label>
+                <input type="text" class="form-input" id="settingPassword" placeholder="不填表示无需密码">
+                <span style="font-size: 12px; color: #999;">设置密码后，答题者需要输入密码才能访问</span>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeSettingsModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="previewModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 700px; width: 95%;">
+            <div class="modal-header">
+                <h2>问卷预览</h2>
+                <button class="modal-close" onclick="closePreviewModal()">&times;</button>
+            </div>
+            <div id="previewContent"></div>
+        </div>
+    </div>
+
+    <script src="js/store.js"></script>
+    <script>
+        let currentSurveyId = null;
+        let questions = [];
+        let surveySettings = {
+            startTime: null,
+            endTime: null,
+            maxResponses: 0,
+            password: ''
+        };
+        let draggedIndex = null;
+
+        function getUrlParam(name) {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(name);
+        }
+
+        function initEditor() {
+            const id = getUrlParam('id');
+            if (id) {
+                currentSurveyId = id;
+                const survey = SurveyStore.getSurvey(id);
+                if (survey) {
+                    document.getElementById('surveyTitle').value = survey.title;
+                    document.getElementById('surveyDesc').value = survey.description || '';
+                    questions = survey.questions || [];
+                    surveySettings = { ...survey.settings };
+                    renderQuestions();
+                    updateQuestionCount();
+                    return;
+                }
+            }
+            renderQuestions();
+            updateQuestionCount();
+        }
+
+        function addQuestion(type) {
+            const question = SurveyStore.createQuestion(type);
+            question.title = getDefaultTitle(type);
+            questions.push(question);
+            renderQuestions();
+            updateQuestionCount();
+        }
+
+        function getDefaultTitle(type) {
+            const titles = {
+                single: '请选择一个选项',
+                multiple: '请选择多个选项',
+                dropdown: '请从下拉列表中选择',
+                text: '请输入您的答案',
+                rating: '请为以下内容评分',
+                matrix: '请根据每一行选择对应的选项'
+            };
+            return titles[type] || '请回答以下问题';
+        }
+
+        function renderQuestions() {
+            const container = document.getElementById('questionsContainer');
+            const emptyEl = document.getElementById('emptyQuestions');
+
+            if (questions.length === 0) {
+                container.innerHTML = '';
+                emptyEl.style.display = 'block';
+                return;
+            }
+
+            emptyEl.style.display = 'none';
+            container.innerHTML = questions.map((q, index) => renderQuestion(q, index)).join('');
+
+            questions.forEach((q, index) => {
+                const el = document.getElementById('q-' + q.id);
+                if (el) {
+                    el.addEventListener('dragstart', () => handleDragStart(index));
+                    el.addEventListener('dragend', handleDragEnd);
+                    el.addEventListener('dragover', (e) => handleDragOver(e, index));
+                    el.addEventListener('drop', (e) => handleDrop(e, index));
+                }
+            });
+        }
+
+        function renderQuestion(question, index) {
+            const typeLabels = {
+                single: '单选题',
+                multiple: '多选题',
+                dropdown: '下拉选择',
+                text: '文本填空',
+                rating: '评分量表',
+                matrix: '矩阵题'
+            };
+
+            let optionsHtml = '';
+
+            if (['single', 'multiple', 'dropdown'].includes(question.type)) {
+                optionsHtml = `
+                    <div style="margin-top: 12px;">
+                        <div class="form-label">选项</div>
+                        <div id="options-${question.id}">
+                            ${question.options.map((opt, optIndex) => `
+                                <div class="option-item">
+                                    <span class="drag-handle">⋮⋮</span>
+                                    <input type="text" value="${escapeHtml(opt)}" 
+                                           onchange="updateOption('${question.id}', ${optIndex}, this.value)"
+                                           placeholder="选项 ${optIndex + 1}">
+                                    <button class="remove-option" onclick="removeOption('${question.id}', ${optIndex})">✕</button>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <button class="add-option-btn" onclick="addOption('${question.id}')">
+                            + 添加选项
+                        </button>
+                    </div>
+                `;
+            } else if (question.type === 'text') {
+                optionsHtml = `
+                    <div style="margin-top: 12px;">
+                        <div class="form-group">
+                            <label class="form-label">占位提示文字</label>
+                            <input type="text" class="form-input" value="${escapeHtml(question.placeholder || '')}" 
+                                   onchange="updateQuestionProp('${question.id}', 'placeholder', this.value)"
+                                   placeholder="请输入您的答案">
+                        </div>
+                    </div>
+                `;
+            } else if (question.type === 'rating') {
+                optionsHtml = `
+                    <div style="margin-top: 12px;">
+                        <div class="form-group">
+                            <label class="form-label">最高评分</label>
+                            <select class="form-select" onchange="updateQuestionProp('${question.id}', 'maxRating', parseInt(this.value))">
+                                ${[3, 5, 7, 10].map(n => `<option value="${n}" ${question.maxRating === n ? 'selected' : ''}>${n} 分</option>`).join('')}
+                            </select>
+                        </div>
+                        <div style="margin-top: 12px;">
+                            <div class="rating-scale">
+                                ${Array.from({length: question.maxRating || 5}, (_, i) => `
+                                    <span class="star ${i < 3 ? 'active' : ''}">★</span>
+                                `).join('')}
+                            </div>
+                            <p style="text-align: center; color: #999; font-size: 13px; margin-top: 8px;">预览效果</p>
+                        </div>
+                    </div>
+                `;
+            } else if (question.type === 'matrix') {
+                optionsHtml = `
+                    <div style="margin-top: 12px;">
+                        <div class="form-group">
+                            <label class="form-label">行标题（每行一个）</label>
+                            <textarea class="form-textarea" rows="4" 
+                                      onchange="updateMatrixRows('${question.id}', this.value)"
+                                      placeholder="每行输入一个行标题">${(question.rows || []).join('\n')}</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">列标题（每列一个）</label>
+                            <textarea class="form-textarea" rows="3" 
+                                      onchange="updateMatrixColumns('${question.id}', this.value)"
+                                      placeholder="每行输入一个列标题">${(question.columns || []).join('\n')}</textarea>
+                        </div>
+                    </div>
+                `;
+            }
+
+            const logicHtml = renderLogicBuilder(question);
+
+            return `
+                <div class="question-item" id="q-${question.id}" draggable="true">
+                    <div class="question-header">
+                        <div>
+                            <span style="font-weight: 600; margin-right: 8px;">Q${index + 1}</span>
+                            <span class="question-type-badge">${typeLabels[question.type]}</span>
+                        </div>
+                        <div class="question-actions">
+                            <button onclick="moveQuestion(${index}, -1)" title="上移">↑</button>
+                            <button onclick="moveQuestion(${index}, 1)" title="下移">↓</button>
+                            <button onclick="toggleLogic('${question.id}')" title="逻辑设置">⚙️</button>
+                            <button class="delete" onclick="deleteQuestion('${question.id}')" title="删除">🗑️</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <input type="text" class="form-input" value="${escapeHtml(question.title)}" 
+                               onchange="updateQuestionProp('${question.id}', 'title', this.value)"
+                               placeholder="请输入题目标题" style="font-size: 15px; font-weight: 500;">
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px;">
+                            <input type="checkbox" ${question.required ? 'checked' : ''} 
+                                   onchange="updateQuestionProp('${question.id}', 'required', this.checked)">
+                            必填
+                        </label>
+                    </div>
+                    ${optionsHtml}
+                    <div id="logic-${question.id}" class="logic-builder" style="display: none;">
+                        <h4>🔗 逻辑跳转设置</h4>
+                        <p style="font-size: 12px; color: #666; margin-bottom: 10px;">
+                            根据本题的回答，跳转到指定题目或结束问卷
+                        </p>
+                        <div id="logicRules-${question.id}">
+                            ${logicHtml}
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="addLogicRule('${question.id}')" style="margin-top: 8px;">
+                            + 添加逻辑规则
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderLogicBuilder(question) {
+            if (!question.logic || question.logic.length === 0) {
+                return '<p style="font-size: 12px; color: #999;">暂无逻辑规则</p>';
+            }
+
+            const targetOptions = questions
+                .filter((q, i) => q.id !== question.id)
+                .map((q, i) => {
+                    const idx = questions.findIndex(qq => qq.id === q.id);
+                    return `<option value="${q.id}">跳转到 Q${idx + 1}: ${escapeHtml(q.title.substring(0, 20))}</option>`;
+                }).join('');
+
+            let valueOptions = '';
+            if (['single', 'multiple', 'dropdown'].includes(question.type)) {
+                valueOptions = question.options.map(opt => 
+                    `<option value="${escapeHtml(opt)}">${escapeHtml(opt)}</option>`
+                ).join('');
+            } else if (question.type === 'rating') {
+                valueOptions = Array.from({length: question.maxRating || 5}, (_, i) => 
+                    `<option value="${i + 1}">${i + 1} 分</option>`
+                ).join('');
+            }
+
+            return question.logic.map((rule, ruleIndex) => `
+                <div class="logic-rule">
+                    <span style="font-size: 12px;">当答案</span>
+                    <select onchange="updateLogicRule('${question.id}', ${ruleIndex}, 'operator', this.value)">
+                        <option value="equals" ${rule.operator === 'equals' ? 'selected' : ''}>等于</option>
+                        <option value="contains" ${rule.operator === 'contains' ? 'selected' : ''}>包含</option>
+                    </select>
+                    <select onchange="updateLogicRule('${question.id}', ${ruleIndex}, 'value', this.value)">
+                        ${valueOptions}
+                    </select>
+                    <span style="font-size: 12px;">则</span>
+                    <select onchange="updateLogicRule('${question.id}', ${ruleIndex}, 'action', this.value)">
+                        <option value="show" ${rule.action === 'show' ? 'selected' : ''}>显示</option>
+                        <option value="skip" ${rule.action === 'skip' ? 'selected' : ''}>跳过</option>
+                        <option value="end" ${rule.action === 'end' ? 'selected' : ''}>结束问卷</option>
+                    </select>
+                    <select onchange="updateLogicRule('${question.id}', ${ruleIndex}, 'target', this.value)"
+                            ${rule.action === 'end' ? 'disabled style="opacity:0.5;"' : ''}>
+                        ${targetOptions}
+                    </select>
+                    <button class="remove-rule" onclick="removeLogicRule('${question.id}', ${ruleIndex})">✕</button>
+                </div>
+            `).join('');
+        }
+
+        function toggleLogic(questionId) {
+            const el = document.getElementById('logic-' + questionId);
+            if (el.style.display === 'none') {
+                el.style.display = 'block';
+            } else {
+                el.style.display = 'none';
+            }
+        }
+
+        function addLogicRule(questionId) {
+            const question = questions.find(q => q.id === questionId);
+            if (!question) return;
+
+            if (!question.logic) question.logic = [];
+
+            const targetQuestion = questions.find(q => q.id !== questionId);
+            let firstOption = '';
+            if (['single', 'multiple', 'dropdown'].includes(question.type)) {
+                firstOption = question.options[0] || '';
+            } else if (question.type === 'rating') {
+                firstOption = '1';
+            }
+
+            question.logic.push({
+                operator: 'equals',
+                value: firstOption,
+                action: 'show',
+                target: targetQuestion ? targetQuestion.id : ''
+            });
+
+            renderQuestions();
+        }
+
+        function updateLogicRule(questionId, ruleIndex, prop, value) {
+            const question = questions.find(q => q.id === questionId);
+            if (!question || !question.logic[ruleIndex]) return;
+            question.logic[ruleIndex][prop] = value;
+        }
+
+        function removeLogicRule(questionId, ruleIndex) {
+            const question = questions.find(q => q.id === questionId);
+            if (!question) return;
+            question.logic.splice(ruleIndex, 1);
+            renderQuestions();
+        }
+
+        function updateOption(questionId, optionIndex, value) {
+            const question = questions.find(q => q.id === questionId);
+            if (question && question.options) {
+                question.options[optionIndex] = value;
+            }
+        }
+
+        function addOption(questionId) {
+            const question = questions.find(q => q.id === questionId);
+            if (question && question.options) {
+                question.options.push(`选项${question.options.length + 1}`);
+                renderQuestions();
+            }
+        }
+
+        function removeOption(questionId, optionIndex) {
+            const question = questions.find(q => q.id === questionId);
+            if (question && question.options && question.options.length > 2) {
+                question.options.splice(optionIndex, 1);
+                renderQuestions();
+            } else {
+                alert('至少需要保留2个选项');
+            }
+        }
+
+        function updateMatrixRows(questionId, value) {
+            const question = questions.find(q => q.id === questionId);
+            if (question) {
+                question.rows = value.split('\n').filter(r => r.trim());
+            }
+        }
+
+        function updateMatrixColumns(questionId, value) {
+            const question = questions.find(q => q.id === questionId);
+            if (question) {
+                question.columns = value.split('\n').filter(c => c.trim());
+            }
+        }
+
+        function updateQuestionProp(questionId, prop, value) {
+            const question = questions.find(q => q.id === questionId);
+            if (question) {
+                question[prop] = value;
+                if (prop === 'maxRating') {
+                    renderQuestions();
+                }
+            }
+        }
+
+        function deleteQuestion(questionId) {
+            if (confirm('确定要删除这道题吗？')) {
+                questions = questions.filter(q => q.id !== questionId);
+                renderQuestions();
+                updateQuestionCount();
+            }
+        }
+
+        function moveQuestion(index, direction) {
+            const newIndex = index + direction;
+            if (newIndex < 0 || newIndex >= questions.length) return;
+            const temp = questions[index];
+            questions[index] = questions[newIndex];
+            questions[newIndex] = temp;
+            renderQuestions();
+        }
+
+        function handleDragStart(index) {
+            draggedIndex = index;
+            event.target.classList.add('dragging');
+        }
+
+        function handleDragEnd() {
+            event.target.classList.remove('dragging');
+            draggedIndex = null;
+        }
+
+        function handleDragOver(e, index) {
+            e.preventDefault();
+        }
+
+        function handleDrop(e, dropIndex) {
+            e.preventDefault();
+            if (draggedIndex === null || draggedIndex === dropIndex) return;
+            const item = questions.splice(draggedIndex, 1)[0];
+            questions.splice(dropIndex, 0, item);
+            renderQuestions();
+            updateQuestionCount();
+        }
+
+        function updateQuestionCount() {
+            document.getElementById('questionCount').textContent = `共 ${questions.length} 道题`;
+        }
+
+        function saveSurvey() {
+            const title = document.getElementById('surveyTitle').value.trim();
+            if (!title) {
+                alert('请输入问卷标题');
+                return;
+            }
+            if (questions.length === 0) {
+                alert('请至少添加一道题目');
+                return;
+            }
+
+            const description = document.getElementById('surveyDesc').value.trim();
+
+            if (currentSurveyId) {
+                SurveyStore.updateSurvey(currentSurveyId, {
+                    title,
+                    description,
+                    questions,
+                    settings: surveySettings
+                });
+                alert('问卷保存成功！');
+            } else {
+                const survey = SurveyStore.createSurvey({
+                    title,
+                    description,
+                    questions,
+                    settings: surveySettings
+                });
+                currentSurveyId = survey.id;
+                alert('问卷创建成功！');
+            }
+        }
+
+        function openSettingsModal() {
+            document.getElementById('settingStartTime').value = surveySettings.startTime || '';
+            document.getElementById('settingEndTime').value = surveySettings.endTime || '';
+            document.getElementById('settingMaxResponses').value = surveySettings.maxResponses || 0;
+            document.getElementById('settingPassword').value = surveySettings.password || '';
+            document.getElementById('settingsModal').classList.remove('hidden');
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settingsModal').classList.add('hidden');
+        }
+
+        function saveSettings() {
+            surveySettings.startTime = document.getElementById('settingStartTime').value || null;
+            surveySettings.endTime = document.getElementById('settingEndTime').value || null;
+            surveySettings.maxResponses = parseInt(document.getElementById('settingMaxResponses').value) || 0;
+            surveySettings.password = document.getElementById('settingPassword').value.trim();
+            closeSettingsModal();
+            alert('设置已保存，记得点击"保存问卷"按钮保存所有更改');
+        }
+
+        function previewSurvey() {
+            const title = document.getElementById('surveyTitle').value || '未命名问卷';
+            const description = document.getElementById('surveyDesc').value || '';
+            
+            let html = `
+                <div class="survey-preview">
+                    <h2 class="survey-title">${escapeHtml(title)}</h2>
+                    <p class="survey-desc">${escapeHtml(description)}</p>
+            `;
+
+            questions.forEach((q, index) => {
+                html += renderPreviewQuestion(q, index);
+            });
+
+            html += `
+                    <button class="btn btn-primary submit-btn">提交问卷</button>
+                </div>
+            `;
+
+            document.getElementById('previewContent').innerHTML = html;
+            document.getElementById('previewModal').classList.remove('hidden');
+        }
+
+        function renderPreviewQuestion(question, index) {
+            let content = '';
+
+            if (question.type === 'single') {
+                content = `<div class="option-list">
+                    ${question.options.map(opt => `
+                        <label class="option-label">
+                            <input type="radio" name="preview-${question.id}" disabled>
+                            <span>${escapeHtml(opt)}</span>
+                        </label>
+                    `).join('')}
+                </div>`;
+            } else if (question.type === 'multiple') {
+                content = `<div class="option-list">
+                    ${question.options.map(opt => `
+                        <label class="option-label">
+                            <input type="checkbox" disabled>
+                            <span>${escapeHtml(opt)}</span>
+                        </label>
+                    `).join('')}
+                </div>`;
+            } else if (question.type === 'dropdown') {
+                content = `<select class="form-select" disabled>
+                    <option value="">请选择</option>
+                    ${question.options.map(opt => `<option value="${escapeHtml(opt)}">${escapeHtml(opt)}</option>`).join('')}
+                </select>`;
+            } else if (question.type === 'text') {
+                content = `<textarea class="form-textarea" placeholder="${escapeHtml(question.placeholder || '')}" disabled></textarea>`;
+            } else if (question.type === 'rating') {
+                content = `<div class="rating-scale">
+                    ${Array.from({length: question.maxRating || 5}, (_, i) => `
+                        <span class="star">★</span>
+                    `).join('')}
+                </div>`;
+            } else if (question.type === 'matrix') {
+                content = `<table class="matrix-table">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            ${(question.columns || []).map(col => `<th>${escapeHtml(col)}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${(question.rows || []).map(row => `
+                            <tr>
+                                <td>${escapeHtml(row)}</td>
+                                ${(question.columns || []).map(() => `
+                                    <td><input type="radio" disabled></td>
+                                `).join('')}
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>`;
+            }
+
+            return `
+                <div class="question-block">
+                    <div class="question-title">
+                        Q${index + 1}. ${escapeHtml(question.title)}
+                        ${question.required ? '<span class="required">*</span>' : ''}
+                    </div>
+                    ${content}
+                </div>
+            `;
+        }
+
+        function closePreviewModal() {
+            document.getElementById('previewModal').classList.add('hidden');
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.appendChild(document.createTextNode(text));
+            return div.innerHTML;
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            initEditor();
+        });
+
+        document.getElementById('settingsModal').addEventListener('click', function(e) {
+            if (e.target === this) closeSettingsModal();
+        });
+
+        document.getElementById('previewModal').addEventListener('click', function(e) {
+            if (e.target === this) closePreviewModal();
+        });
+    </script>
+</body>
+</html>

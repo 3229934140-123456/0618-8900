@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>问卷答题 - 问卷设计与收集系统</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div id="app"></div>
+    </div>
+
+    <script src="js/store.js"></script>
+    <script>
+        let survey = null;
+        let answers = {};
+        let submitted = false;
+        let currentQuestionIndex = 0;
+
+        function getUrlParam(name) {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(name);
+        }
+
+        function init() {
+            const surveyId = getUrlParam('id');
+            if (!surveyId) {
+                showError('问卷不存在');
+                return;
+            }
+
+            survey = SurveyStore.getSurvey(surveyId);
+            if (!survey) {
+                showError('问卷不存在');
+                return;
+            }
+
+            if (survey.settings.password) {
+                showPasswordForm();
+            } else {
+                checkAndShowSurvey();
+            }
+        }
+
+        function showError(message) {
+            document.getElementById('app').innerHTML = `
+                <div class="card" style="text-align: center; padding: 60px 20px;">
+                    <div style="font-size: 48px; margin-bottom: 16px;">⚠️</div>
+                    <h2 style="color: #ff4d4f; margin-bottom: 12px;">${message}</h2>
+                    <p style="color: #888; margin-bottom: 24px;">请检查链接是否正确，或联系问卷创建者</p>
+                    <button class="btn btn-primary" onclick="window.location.href='index.html'">返回首页</button>
+                </div>
+            `;
+        }
+
+        function showPasswordForm() {
+            const status = SurveyStore.getSurveyStatus(survey);
+            if (status.status !== 'active') {
+                showError('问卷' + status.label);
+                return;
+            }
+
+            document.getElementById('app').innerHTML = `
+                <div class="card" style="max-width: 400px; margin: 60px auto; text-align: center;">
+                    <div style="font-size: 48px; margin-bottom: 16px;">🔐</div>
+                    <h2 style="margin-bottom: 8px;">${escapeHtml(survey.title)}</h2>
+                    <p style="color: #888; margin-bottom: 24px;">此问卷需要密码访问</p>
+                    <div class="form-group">
+                        <input type="password" class="form-input" id="passwordInput" placeholder="请输入访问密码" style="text-align: center;">
+                    </div>
+                    <button class="btn btn-primary" onclick="verifyPassword()" style="width: 100%;">进入问卷</button>
+                    <p id="passwordError" style="color: #ff4d4f; font-size: 13px; margin-top: 12px; display: none;">密码错误</p>
+                </div>
+            `;
+
+            document.getElementById('passwordInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    verifyPassword();
+                }
+            });
+        }
+
+        function verifyPassword() {
+            const password = document.getElementById('passwordInput').value;
+            if (password === survey.settings.password) {
+                checkAndShowSurvey();
+            } else {
+                document.getElementById('passwordError').style.display = 'block';
+                document.getElementById('passwordInput').value = '';
+                document.getElementById('passwordInput').focus();
+            }
+        }
+
+        function checkAndShowSurvey() {
+            const status = SurveyStore.getSurveyStatus(survey);
+            if (status.status !== 'active') {
+                showError('问卷' + status.label);
+                return;
+            }
+
+            showSurvey();
+        }
+
+        function showSurvey() {
+            const visibleQuestions = getVisibleQuestions();
+            
+            let html = `
+                <div class="survey-preview">
+                    <h1 class="survey-title">${escapeHtml(survey.title)}</h1>
+                    <p class="survey-desc">${escapeHtml(survey.description || '')}</p>
+            `;
+
+            visibleQuestions.forEach((q, index) => {
+                const realIndex = survey.questions.findIndex(qq => qq.id === q.id);
+                html += renderQuestion(q, realIndex);
+            });
+
+            html += `
+                    <button class="btn btn-primary submit-btn" onclick="submitSurvey()">提交问卷</button>
+                </div>
+            `;
+
+            document.getElementById('app').innerHTML = html;
+        }
+
+        function getVisibleQuestions() {
+            const visible = [];
+            const questionMap = {};
+            survey.questions.forEach(q => {
+                questionMap[q.id] = q;
+            });
+
+            for (let i = 0; i < survey.questions.length; i++) {
+                const question = survey.questions[i];
+                let shouldShow = true;
+
+                for (let j = 0; j < i; j++) {
+                    const prevQuestion = survey.questions[j];
+                    if (prevQuestion.logic && prevQuestion.logic.length > 0) {
+                        const answer = answers[prevQuestion.id];
+                        for (const rule of prevQuestion.logic) {
+                            if (rule.target === question.id) {
+                                if (rule.action === 'show') {
+                                    shouldShow = shouldShow && checkLogicCondition(rule, answer);
+                                } else if (rule.action === 'skip') {
+                                    if (checkLogicCondition(rule, answer)) {
+                                        shouldShow = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (shouldShow) {
+                    visible.push(question);
+                }
+            }
+
+            return visible;
+        }
+
+        function checkLogicCondition(rule, answer) {
+            if (rule.operator === 'equals') {
+                if (Array.isArray(answer)) {
+                    return answer.includes(rule.value);
+                }
+                return answer === rule.value;
+            } else if (rule.operator === 'contains') {
+                if (Array.isArray(answer)) {
+                    return answer.some(a => String(a).includes(rule.value));
+                }
+                return String(answer || '').includes(rule.value);
+            }
+            return false;
+        }
+
+        function renderQuestion(question, index) {
+            const answer = answers[question.id];
+            let content = '';
+
+            if (question.type === 'single') {
+                content = `<div class="option-list">
+                    ${question.options.map((opt, optIndex) => `
+                        <label class="option-label ${answer === opt ? 'selected' : ''}">
+                            <input type="radio" name="q-${question.id}" value="${escapeHtml(opt)}"
+                                   ${answer === opt ? 'checked' : ''}
+                                   onchange="setAnswer('${question.id}', '${escapeHtml(opt)}')">
+                            <span>${escapeHtml(opt)}</span>
+                        </label>
+                    `).join('')}
+                </div>`;
+            } else if (question.type === 'multiple') {
+                const selectedAnswers = Array.isArray(answer) ? answer : [];
+                content = `<div class="option-list">
+                    ${question.options.map(opt => `
+                        <label class="option-label ${selectedAnswers.includes(opt) ? 'selected' : ''}">
+                            <input type="checkbox" value="${escapeHtml(opt)}"
+                                   ${selectedAnswers.includes(opt) ? 'checked' : ''}
+                                   onchange="toggleMultipleAnswer('${question.id}', '${escapeHtml(opt)}')">
+                            <span>${escapeHtml(opt)}</span>
+                        </label>
+                    `).join('')}
+                </div>`;
+            } else if (question.type === 'dropdown') {
+                content = `<select class="form-select" onchange="setAnswer('${question.id}', this.value)">
+                    <option value="">请选择</option>
+                    ${question.options.map(opt => `
+                        <option value="${escapeHtml(opt)}" ${answer === opt ? 'selected' : ''}>
+                            ${escapeHtml(opt)}
+                        </option>
+                    `).join('')}
+                </select>`;
+            } else if (question.type === 'text') {
+                content = `<textarea class="form-textarea" 
+                            placeholder="${escapeHtml(question.placeholder || '请输入您的答案')}"
+                            onchange="setAnswer('${question.id}', this.value)"
+                            oninput="setAnswer('${question.id}', this.value)">${answer || ''}</textarea>`;
+            } else if (question.type === 'rating') {
+                const maxRating = question.maxRating || 5;
+                const rating = answer || 0;
+                content = `<div class="rating-scale" id="rating-${question.id}">
+                    ${Array.from({length: maxRating}, (_, i) => `
+                        <span class="star ${i < rating ? 'active' : ''}" 
+                              onclick="setRating('${question.id}', ${i + 1})"
+                              onmouseover="hoverRating('${question.id}', ${i + 1})"
+                              onmouseout="resetRating('${question.id}')">★</span>
+                    `).join('')}
+                </div>
+                <p style="text-align: center; color: #666; font-size: 14px; margin-top: 8px;">
+                    ${rating > 0 ? rating + ' 分' : '请点击评分'}
+                </p>`;
+            } else if (question.type === 'matrix') {
+                const matrixAnswers = answer || {};
+                content = `<table class="matrix-table">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            ${(question.columns || []).map(col => `<th>${escapeHtml(col)}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${(question.rows || []).map((row, rowIndex) => `
+                            <tr>
+                                <td>${escapeHtml(row)}</td>
+                                ${(question.columns || []).map((col, colIndex) => `
+                                    <td>
+                                        <input type="radio" name="matrix-${question.id}-${rowIndex}"
+                                               value="${escapeHtml(col)}"
+                                               ${matrixAnswers[row] === col ? 'checked' : ''}
+                                               onchange="setMatrixAnswer('${question.id}', '${escapeHtml(row)}', '${escapeHtml(col)}')">
+                                    </td>
+                                `).join('')}
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>`;
+            }
+
+            return `
+                <div class="question-block" id="question-block-${question.id}">
+                    <div class="question-title">
+                        Q${index + 1}. ${escapeHtml(question.title)}
+                        ${question.required ? '<span class="required">*</span>' : ''}
+                    </div>
+                    ${content}
+                </div>
+            `;
+        }
+
+        function setAnswer(questionId, value) {
+            answers[questionId] = value;
+            updateVisibility();
+        }
+
+        function toggleMultipleAnswer(questionId, value) {
+            if (!answers[questionId] || !Array.isArray(answers[questionId])) {
+                answers[questionId] = [];
+            }
+            const index = answers[questionId].indexOf(value);
+            if (index > -1) {
+                answers[questionId].splice(index, 1);
+            } else {
+                answers[questionId].push(value);
+            }
+            showSurvey();
+        }
+
+        function setRating(questionId, rating) {
+            answers[questionId] = rating;
+            showSurvey();
+        }
+
+        function hoverRating(questionId, rating) {
+            const container = document.getElementById('rating-' + questionId);
+            if (container) {
+                const stars = container.querySelectorAll('.star');
+                stars.forEach((star, i) => {
+                    if (i < rating) {
+                        star.classList.add('active');
+                    } else {
+                        star.classList.remove('active');
+                    }
+                });
+            }
+        }
+
+        function resetRating(questionId) {
+            const rating = answers[questionId] || 0;
+            const container = document.getElementById('rating-' + questionId);
+            if (container) {
+                const stars = container.querySelectorAll('.star');
+                stars.forEach((star, i) => {
+                    if (i < rating) {
+                        star.classList.add('active');
+                    } else {
+                        star.classList.remove('active');
+                    }
+                });
+            }
+        }
+
+        function setMatrixAnswer(questionId, row, value) {
+            if (!answers[questionId]) {
+                answers[questionId] = {};
+            }
+            answers[questionId][row] = value;
+            updateVisibility();
+        }
+
+        function updateVisibility() {
+            const visibleQuestions = getVisibleQuestions();
+            const visibleIds = visibleQuestions.map(q => q.id);
+
+            survey.questions.forEach(q => {
+                const block = document.getElementById('question-block-' + q.id);
+                if (block) {
+                    if (visibleIds.includes(q.id)) {
+                        block.classList.remove('hidden');
+                    } else {
+                        block.classList.add('hidden');
+                    }
+                }
+            });
+        }
+
+        function checkShouldEnd() {
+            for (let i = 0; i < survey.questions.length; i++) {
+                const question = survey.questions[i];
+                if (question.logic && question.logic.length > 0) {
+                    const answer = answers[question.id];
+                    for (const rule of question.logic) {
+                        if (rule.action === 'end' && checkLogicCondition(rule, answer)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        function submitSurvey() {
+            if (submitted) return;
+
+            const visibleQuestions = getVisibleQuestions();
+
+            for (const question of visibleQuestions) {
+                if (question.required) {
+                    const answer = answers[question.id];
+                    if (answer === undefined || answer === null || answer === '' || 
+                        (Array.isArray(answer) && answer.length === 0) ||
+                        (typeof answer === 'object' && !Array.isArray(answer) && question.type === 'matrix' && Object.keys(answer).length === 0)) {
+                        alert(`请完成第 ${survey.questions.findIndex(q => q.id === question.id) + 1} 题：${question.title}`);
+                        const block = document.getElementById('question-block-' + question.id);
+                        if (block) {
+                            block.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            block.style.border = '2px solid #ff4d4f';
+                            setTimeout(() => {
+                                block.style.border = '';
+                            }, 2000);
+                        }
+                        return;
+                    }
+                }
+            }
+
+            const result = SurveyStore.submitResponse(survey.id, answers);
+            
+            if (result.success) {
+                submitted = true;
+                showSuccessPage();
+            } else {
+                alert('提交失败：' + result.error);
+            }
+        }
+
+        function showSuccessPage() {
+            document.getElementById('app').innerHTML = `
+                <div class="card success-page">
+                    <div class="icon">✅</div>
+                    <h2>提交成功！</h2>
+                    <p>感谢您的参与，您的回答已成功提交。</p>
+                    <p style="font-size: 13px; color: #999;">答卷提交后不可修改</p>
+                    <button class="btn btn-primary" onclick="window.location.href='index.html'">返回首页</button>
+                </div>
+            `;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.appendChild(document.createTextNode(text));
+            return div.innerHTML;
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            init();
+        });
+    </script>
+</body>
+</html>
