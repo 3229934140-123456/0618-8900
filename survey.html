@@ -20,6 +20,7 @@
         let submitted = false;
         let surveyEnded = false;
         let endQuestionIndex = -1;
+        let lastVisibleIds = [];
 
         function getUrlParam(name) {
             const urlParams = new URLSearchParams(window.location.search);
@@ -112,6 +113,7 @@
             const { visibleQuestions, endIndex } = getVisibleQuestions();
             endQuestionIndex = endIndex;
             surveyEnded = endIndex >= 0;
+            lastVisibleIds = visibleQuestions.map(q => q.id);
 
             let html = `
                 <div class="survey-preview">
@@ -144,32 +146,20 @@
         function getVisibleQuestions() {
             const visible = [];
             let endIndex = -1;
-            const questionMap = {};
+            const added = new Set();
             
-            survey.questions.forEach(q => {
-                questionMap[q.id] = q;
-            });
-
             for (let i = 0; i < survey.questions.length; i++) {
                 const question = survey.questions[i];
                 
-                if (endIndex >= 0) {
-                    continue;
-                }
+                if (endIndex >= 0) break;
+                if (added.has(question.id)) continue;
 
                 let shouldShow = true;
-
                 for (let j = 0; j < i; j++) {
                     const prevQuestion = survey.questions[j];
                     if (prevQuestion.logic && prevQuestion.logic.length > 0) {
                         const answer = answers[prevQuestion.id];
                         for (const rule of prevQuestion.logic) {
-                            if (rule.action === 'end' && checkLogicCondition(rule, answer)) {
-                                endIndex = j;
-                                shouldShow = false;
-                                break;
-                            }
-                            
                             if (rule.target === question.id) {
                                 if (rule.action === 'show') {
                                     shouldShow = shouldShow && checkLogicCondition(rule, answer);
@@ -180,12 +170,31 @@
                                 }
                             }
                         }
-                        if (endIndex >= 0) break;
                     }
                 }
 
-                if (shouldShow && endIndex < 0) {
+                if (shouldShow) {
                     visible.push(question);
+                    added.add(question.id);
+                }
+
+                if (question.logic && question.logic.length > 0) {
+                    const answer = answers[question.id];
+                    for (const rule of question.logic) {
+                        if (rule.action === 'end' && checkLogicCondition(rule, answer)) {
+                            endIndex = i;
+                            break;
+                        }
+                        
+                        if (rule.action === 'show' && checkLogicCondition(rule, answer)) {
+                            const targetQuestion = survey.questions.find(q => q.id === rule.target);
+                            if (targetQuestion && !added.has(targetQuestion.id)) {
+                                visible.push(targetQuestion);
+                                added.add(targetQuestion.id);
+                            }
+                        }
+                    }
+                    if (endIndex >= 0) break;
                 }
             }
 
@@ -310,8 +319,12 @@
             const visibleIds = visibleQuestions.map(q => q.id);
             const newEndIndex = endIndex;
 
-            if (newEndIndex !== endQuestionIndex || surveyEnded !== (newEndIndex >= 0)) {
+            const orderChanged = visibleIds.join(',') !== lastVisibleIds.join(',');
+            const endChanged = newEndIndex !== endQuestionIndex || surveyEnded !== (newEndIndex >= 0);
+
+            if (orderChanged || endChanged) {
                 renderAllQuestions();
+                lastVisibleIds = visibleIds;
                 return;
             }
 
@@ -349,9 +362,7 @@
                 }
             });
 
-            if (newEndIndex >= 0 && !surveyEnded) {
-                renderAllQuestions();
-            }
+            lastVisibleIds = visibleIds;
         }
 
         function setAnswer(questionId, value) {
@@ -365,6 +376,7 @@
 
         function handleTextInput(questionId, value) {
             answers[questionId] = value;
+            updateVisibility();
         }
 
         function toggleMultipleAnswer(questionId, value) {

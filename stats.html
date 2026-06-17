@@ -98,7 +98,8 @@
         let filteredResponses = [];
         let currentFilter = null;
         let autoRefreshInterval = null;
-        let lastResponseCount = 0;
+        let lastResponseCount = -1;
+        let surveyStatus = null;
 
         function getUrlParam(name) {
             const urlParams = new URLSearchParams(window.location.search);
@@ -134,10 +135,15 @@
 
         async function loadData() {
             try {
-                const responses = await SurveyStore.getSurveyResponses(survey.id);
+                const [responses, status] = await Promise.all([
+                    SurveyStore.getSurveyResponses(survey.id),
+                    SurveyStore.getSurveyStatus(survey.id)
+                ]);
                 allResponses = responses || [];
+                surveyStatus = status;
 
-                if (allResponses.length !== lastResponseCount) {
+                const shouldRender = allResponses.length !== lastResponseCount;
+                if (shouldRender) {
                     stats = SurveyStore.calculateStats(survey, allResponses);
                     
                     if (currentFilter) {
@@ -148,13 +154,14 @@
                         filteredResponses = allResponses;
                     }
 
-                    renderStatsGrid();
                     renderCharts();
                     renderResponses();
                     
                     lastResponseCount = allResponses.length;
-                    updateLastUpdateTime();
                 }
+
+                renderStatsGrid();
+                updateLastUpdateTime();
             } catch (e) {
                 console.error('刷新数据失败:', e);
             }
@@ -191,7 +198,7 @@
 
         function renderStatsGrid() {
             const responses = allResponses;
-            const status = SurveyStore.getSurveyStatus(survey.id);
+            const status = surveyStatus || { status: 'active', label: '加载中...' };
             
             let completionRate = 0;
             if (responses.length > 0) {
@@ -219,11 +226,17 @@
                 }, 0) / responses.length).toFixed(1)
                 : 0;
 
+            let statusColor = '#999';
+            if (status.status === 'active') statusColor = '#52c41a';
+            else if (status.status === 'pending') statusColor = '#1890ff';
+            else if (status.status === 'ended') statusColor = '#ff4d4f';
+            else if (status.status === 'full') statusColor = '#fa8c16';
+
             const html = `
                 <div class="stat-card">
                     <h3>总答卷数</h3>
                     <div class="value primary">${responses.length}</div>
-                    ${lastResponseCount > 0 ? `<div style="font-size: 12px; color: #52c41a; margin-top: 4px;">● 实时更新</div>` : ''}
+                    <div style="font-size: 12px; color: #52c41a; margin-top: 4px;">● 实时更新</div>
                 </div>
                 <div class="stat-card">
                     <h3>题目数量</h3>
@@ -231,7 +244,7 @@
                 </div>
                 <div class="stat-card">
                     <h3>问卷状态</h3>
-                    <div class="value" style="font-size: 20px; color: ${status.status === 'active' ? '#52c41a' : '#999'};">
+                    <div class="value" style="font-size: 20px; color: ${statusColor};">
                         ${status.label}
                     </div>
                 </div>
@@ -248,9 +261,24 @@
             const container = document.getElementById('chartsContainer');
             let html = '';
 
+            if (!stats || !stats.questions) {
+                container.innerHTML = '<p style="color: #999; text-align: center; padding: 40px;">暂无数据，等待提交第一份答卷...</p>';
+                return;
+            }
+
             survey.questions.forEach((question, index) => {
                 const qStats = stats.questions[question.id];
-                if (!qStats) return;
+                if (!qStats) {
+                    html += `<div class="chart-container">
+                        <h3>Q${index + 1}. ${escapeHtml(question.title)} 
+                            <span style="font-size: 13px; color: #999; font-weight: normal;">
+                                (0 人回答)
+                            </span>
+                        </h3>
+                        <p style="color: #999; padding: 20px 0;">暂无回答数据</p>
+                    </div>`;
+                    return;
+                }
 
                 html += `<div class="chart-container">
                     <h3>Q${index + 1}. ${escapeHtml(question.title)} 
@@ -259,20 +287,25 @@
                         </span>
                     </h3>`;
 
-                if (['single', 'multiple', 'dropdown'].includes(question.type)) {
-                    html += renderBarChart(qStats);
-                } else if (question.type === 'rating') {
-                    html += renderRatingChart(qStats, question);
-                } else if (question.type === 'matrix') {
-                    html += renderMatrixChart(qStats, question);
-                } else if (question.type === 'text') {
-                    html += renderTextAnswers(qStats);
+                try {
+                    if (['single', 'multiple', 'dropdown'].includes(question.type)) {
+                        html += renderBarChart(qStats);
+                    } else if (question.type === 'rating') {
+                        html += renderRatingChart(qStats, question);
+                    } else if (question.type === 'matrix') {
+                        html += renderMatrixChart(qStats, question);
+                    } else if (question.type === 'text') {
+                        html += renderTextAnswers(qStats);
+                    }
+                } catch (e) {
+                    console.error('渲染图表出错:', question.id, e);
+                    html += '<p style="color: #999; padding: 20px 0;">数据加载中...</p>';
                 }
 
                 html += '</div>';
             });
 
-            container.innerHTML = html || '<p style="color: #999; text-align: center; padding: 40px;">暂无数据</p>';
+            container.innerHTML = html || '<p style="color: #999; text-align: center; padding: 40px;">暂无数据，等待提交第一份答卷...</p>';
         }
 
         function renderBarChart(qStats) {
@@ -521,17 +554,24 @@
 
             survey.questions.forEach((question, index) => {
                 const answer = response.answers[question.id];
-                let displayAnswer = '未回答';
+                let answerHtml = '<span style="color: #999;">未回答</span>';
                 
                 if (answer !== undefined && answer !== null && answer !== '') {
                     if (Array.isArray(answer)) {
-                        displayAnswer = answer.join('、');
+                        answerHtml = escapeHtml(answer.join('、'));
                     } else if (typeof answer === 'object' && question.type === 'matrix') {
-                        displayAnswer = '；'.join([`${k}:${v}` for k, v in Object.entries(answer)]);
+                        let matrixHtml = '<table style="width: 100%; border-collapse: collapse; margin-top: 8px;">';
+                        matrixHtml += '<thead><tr><th style="text-align: left; padding: 8px; background: #f0f0f0; border: 1px solid #ddd;">题目</th><th style="text-align: left; padding: 8px; background: #f0f0f0; border: 1px solid #ddd;">选择</th></tr></thead>';
+                        matrixHtml += '<tbody>';
+                        Object.entries(answer).forEach(([row, value]) => {
+                            matrixHtml += `<tr><td style="padding: 8px; border: 1px solid #ddd;">${escapeHtml(row)}</td><td style="padding: 8px; border: 1px solid #ddd;">${escapeHtml(value || '-')}</td></tr>`;
+                        });
+                        matrixHtml += '</tbody></table>';
+                        answerHtml = matrixHtml;
                     } else if (question.type === 'rating') {
-                        displayAnswer = `${answer} 分`;
+                        answerHtml = `<span style="color: #faad14; font-weight: 500;">${answer} 分</span>`;
                     } else {
-                        displayAnswer = String(answer);
+                        answerHtml = escapeHtml(String(answer));
                     }
                 }
 
@@ -540,7 +580,7 @@
                         <div style="font-weight: 500; margin-bottom: 8px;">
                             Q${index + 1}. ${escapeHtml(question.title)}
                         </div>
-                        <div style="color: #666;">${escapeHtml(displayAnswer)}</div>
+                        <div style="color: #666;">${answerHtml}</div>
                     </div>
                 `;
             });
