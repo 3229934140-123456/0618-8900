@@ -1,0 +1,96 @@
+[
+  {
+    "id": "sample_survey_001",
+    "title": "用户满意度调查问卷",
+    "description": "感谢您参与本次调查，您的反馈对我们非常重要！问卷大约需要3分钟完成。",
+    "questions": [
+      {
+        "id": "sample_q1",
+        "type": "single",
+        "title": "您的性别是？",
+        "required": true,
+        "options": [
+          "男",
+          "女",
+          "其他"
+        ],
+        "logic": [
+          {
+            "operator": "equals",
+            "value": "其他",
+            "action": "show",
+            "target": "sample_q6"
+          }
+        ]
+      },
+      {
+        "id": "sample_q2",
+        "type": "single",
+        "title": "您的年龄段是？",
+        "required": true,
+        "options": [
+          "18岁以下",
+          "18-25岁",
+          "26-35岁",
+          "36-45岁",
+          "46岁以上"
+        ],
+        "logic": []
+      },
+      {
+        "id": "sample_q3",
+        "type": "multiple",
+        "title": "您是通过哪些渠道了解到我们的产品的？（可多选）",
+        "required": false,
+        "options": [
+          "朋友推荐",
+          "社交媒体",
+          "搜索引擎",
+          "广告投放",
+          "线下活动",
+          "其他"
+        ],
+        "logic": []
+      },
+      {
+        "id": "sample_q4",
+        "type": "rating",
+        "title": "请为我们的产品整体满意度打分",
+        "required": true,
+        "maxRating": 5,
+        "logic": []
+      },
+      {
+        "id": "sample_q5",
+        "type": "text",
+        "title": "您对我们的产品有什么建议或意见？",
+        "required": false,
+        "placeholder": "请输入您的宝贵建议...",
+        "logic": []
+      },
+      {
+        "id": "sample_q6",
+        "type": "dropdown",
+        "title": "您最常使用我们的哪项功能？",
+        "required": false,
+        "options": [
+          "数据分析",
+          "报表生成",
+          "用户管理",
+          "系统设置",
+          "其他"
+        ],
+        "logic": []
+      }
+    ],
+    "settings": {
+      "startTime": null,
+      "endTime": null,
+      "maxResponses": 0,
+      "password": "",
+      "allowModify": false
+    },
+    "createdAt": 1781122191194,
+    "updatedAt": 1781726991194
+  }
+]

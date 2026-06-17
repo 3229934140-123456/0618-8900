@@ -8,7 +8,9 @@
 </head>
 <body>
     <div class="container">
-        <div id="app"></div>
+        <div id="app">
+            <div style="text-align: center; padding: 60px; color: #888;">加载中...</div>
+        </div>
     </div>
 
     <script src="js/store.js"></script>
@@ -16,30 +18,40 @@
         let survey = null;
         let answers = {};
         let submitted = false;
-        let currentQuestionIndex = 0;
+        let surveyEnded = false;
+        let endQuestionIndex = -1;
 
         function getUrlParam(name) {
             const urlParams = new URLSearchParams(window.location.search);
             return urlParams.get(name);
         }
 
-        function init() {
+        async function init() {
             const surveyId = getUrlParam('id');
             if (!surveyId) {
                 showError('问卷不存在');
                 return;
             }
 
-            survey = SurveyStore.getSurvey(surveyId);
-            if (!survey) {
-                showError('问卷不存在');
-                return;
-            }
+            try {
+                survey = await SurveyStore.getSurvey(surveyId);
+                if (!survey) {
+                    showError('问卷不存在');
+                    return;
+                }
 
-            if (survey.settings.password) {
-                showPasswordForm();
-            } else {
-                checkAndShowSurvey();
+                if (survey.settings.password) {
+                    showPasswordForm();
+                } else {
+                    const canResult = await SurveyStore.canTakeSurvey(survey, '');
+                    if (!canResult.can) {
+                        showError('问卷' + canResult.reason);
+                        return;
+                    }
+                    showSurvey();
+                }
+            } catch (e) {
+                showError('加载问卷失败：' + e.message);
             }
         }
 
@@ -55,12 +67,6 @@
         }
 
         function showPasswordForm() {
-            const status = SurveyStore.getSurveyStatus(survey);
-            if (status.status !== 'active') {
-                showError('问卷' + status.label);
-                return;
-            }
-
             document.getElementById('app').innerHTML = `
                 <div class="card" style="max-width: 400px; margin: 60px auto; text-align: center;">
                     <div style="font-size: 48px; margin-bottom: 16px;">🔐</div>
@@ -81,40 +87,51 @@
             });
         }
 
-        function verifyPassword() {
+        async function verifyPassword() {
             const password = document.getElementById('passwordInput').value;
-            if (password === survey.settings.password) {
-                checkAndShowSurvey();
+            const canResult = await SurveyStore.canTakeSurvey(survey, password);
+            
+            if (canResult.can) {
+                showSurvey();
             } else {
-                document.getElementById('passwordError').style.display = 'block';
-                document.getElementById('passwordInput').value = '';
-                document.getElementById('passwordInput').focus();
+                if (canResult.reason === '密码错误') {
+                    document.getElementById('passwordError').style.display = 'block';
+                    document.getElementById('passwordInput').value = '';
+                    document.getElementById('passwordInput').focus();
+                } else {
+                    showError('问卷' + canResult.reason);
+                }
             }
-        }
-
-        function checkAndShowSurvey() {
-            const status = SurveyStore.getSurveyStatus(survey);
-            if (status.status !== 'active') {
-                showError('问卷' + status.label);
-                return;
-            }
-
-            showSurvey();
         }
 
         function showSurvey() {
-            const visibleQuestions = getVisibleQuestions();
-            
+            renderAllQuestions();
+        }
+
+        function renderAllQuestions() {
+            const { visibleQuestions, endIndex } = getVisibleQuestions();
+            endQuestionIndex = endIndex;
+            surveyEnded = endIndex >= 0;
+
             let html = `
                 <div class="survey-preview">
                     <h1 class="survey-title">${escapeHtml(survey.title)}</h1>
                     <p class="survey-desc">${escapeHtml(survey.description || '')}</p>
             `;
 
-            visibleQuestions.forEach((q, index) => {
+            visibleQuestions.forEach((q, displayIndex) => {
                 const realIndex = survey.questions.findIndex(qq => qq.id === q.id);
-                html += renderQuestion(q, realIndex);
+                html += renderQuestion(q, realIndex, displayIndex);
             });
+
+            if (surveyEnded) {
+                html += `
+                    <div class="card" style="background: #fffbe6; border: 1px solid #ffe58f; text-align: center; padding: 20px; margin-bottom: 20px;">
+                        <div style="font-size: 24px; margin-bottom: 8px;">📋</div>
+                        <p style="color: #d48806; margin: 0;">根据您的选择，问卷已提前结束</p>
+                    </div>
+                `;
+            }
 
             html += `
                     <button class="btn btn-primary submit-btn" onclick="submitSurvey()">提交问卷</button>
@@ -126,13 +143,20 @@
 
         function getVisibleQuestions() {
             const visible = [];
+            let endIndex = -1;
             const questionMap = {};
+            
             survey.questions.forEach(q => {
                 questionMap[q.id] = q;
             });
 
             for (let i = 0; i < survey.questions.length; i++) {
                 const question = survey.questions[i];
+                
+                if (endIndex >= 0) {
+                    continue;
+                }
+
                 let shouldShow = true;
 
                 for (let j = 0; j < i; j++) {
@@ -140,6 +164,12 @@
                     if (prevQuestion.logic && prevQuestion.logic.length > 0) {
                         const answer = answers[prevQuestion.id];
                         for (const rule of prevQuestion.logic) {
+                            if (rule.action === 'end' && checkLogicCondition(rule, answer)) {
+                                endIndex = j;
+                                shouldShow = false;
+                                break;
+                            }
+                            
                             if (rule.target === question.id) {
                                 if (rule.action === 'show') {
                                     shouldShow = shouldShow && checkLogicCondition(rule, answer);
@@ -150,33 +180,38 @@
                                 }
                             }
                         }
+                        if (endIndex >= 0) break;
                     }
                 }
 
-                if (shouldShow) {
+                if (shouldShow && endIndex < 0) {
                     visible.push(question);
                 }
             }
 
-            return visible;
+            return { visibleQuestions: visible, endIndex };
         }
 
         function checkLogicCondition(rule, answer) {
+            if (answer === undefined || answer === null || answer === '') {
+                return false;
+            }
+
             if (rule.operator === 'equals') {
                 if (Array.isArray(answer)) {
                     return answer.includes(rule.value);
                 }
-                return answer === rule.value;
+                return String(answer) === String(rule.value);
             } else if (rule.operator === 'contains') {
                 if (Array.isArray(answer)) {
                     return answer.some(a => String(a).includes(rule.value));
                 }
-                return String(answer || '').includes(rule.value);
+                return String(answer).includes(rule.value);
             }
             return false;
         }
 
-        function renderQuestion(question, index) {
+        function renderQuestion(question, realIndex, displayIndex) {
             const answer = answers[question.id];
             let content = '';
 
@@ -216,7 +251,8 @@
                 content = `<textarea class="form-textarea" 
                             placeholder="${escapeHtml(question.placeholder || '请输入您的答案')}"
                             onchange="setAnswer('${question.id}', this.value)"
-                            oninput="setAnswer('${question.id}', this.value)">${answer || ''}</textarea>`;
+                            oninput="handleTextInput('${question.id}', this.value)"
+                            onblur="setAnswer('${question.id}', this.value)">${answer || ''}</textarea>`;
             } else if (question.type === 'rating') {
                 const maxRating = question.maxRating || 5;
                 const rating = answer || 0;
@@ -228,7 +264,7 @@
                               onmouseout="resetRating('${question.id}')">★</span>
                     `).join('')}
                 </div>
-                <p style="text-align: center; color: #666; font-size: 14px; margin-top: 8px;">
+                <p style="text-align: center; color: #666; font-size: 14px; margin-top: 8px;" id="rating-text-${question.id}">
                     ${rating > 0 ? rating + ' 分' : '请点击评分'}
                 </p>`;
             } else if (question.type === 'matrix') {
@@ -261,7 +297,7 @@
             return `
                 <div class="question-block" id="question-block-${question.id}">
                     <div class="question-title">
-                        Q${index + 1}. ${escapeHtml(question.title)}
+                        Q${realIndex + 1}. ${escapeHtml(question.title)}
                         ${question.required ? '<span class="required">*</span>' : ''}
                     </div>
                     ${content}
@@ -269,9 +305,66 @@
             `;
         }
 
+        function updateVisibility() {
+            const { visibleQuestions, endIndex } = getVisibleQuestions();
+            const visibleIds = visibleQuestions.map(q => q.id);
+            const newEndIndex = endIndex;
+
+            if (newEndIndex !== endQuestionIndex || surveyEnded !== (newEndIndex >= 0)) {
+                renderAllQuestions();
+                return;
+            }
+
+            survey.questions.forEach(q => {
+                const block = document.getElementById('question-block-' + q.id);
+                if (block) {
+                    if (visibleIds.includes(q.id)) {
+                        if (block.classList.contains('hidden')) {
+                            block.style.display = 'none';
+                            block.classList.remove('hidden');
+                            block.style.opacity = '0';
+                            block.style.transform = 'translateY(-10px)';
+                            block.style.transition = 'all 0.3s ease';
+                            
+                            setTimeout(() => {
+                                block.style.display = 'block';
+                                setTimeout(() => {
+                                    block.style.opacity = '1';
+                                    block.style.transform = 'translateY(0)';
+                                }, 10);
+                            }, 10);
+                        }
+                    } else {
+                        if (!block.classList.contains('hidden')) {
+                            block.style.opacity = '0';
+                            block.style.transform = 'translateY(-10px)';
+                            block.style.transition = 'all 0.3s ease';
+                            
+                            setTimeout(() => {
+                                block.classList.add('hidden');
+                                block.style.display = 'none';
+                            }, 300);
+                        }
+                    }
+                }
+            });
+
+            if (newEndIndex >= 0 && !surveyEnded) {
+                renderAllQuestions();
+            }
+        }
+
         function setAnswer(questionId, value) {
+            const oldValue = answers[questionId];
             answers[questionId] = value;
-            updateVisibility();
+            
+            if (oldValue !== value) {
+                updateVisibility();
+            }
+        }
+
+        function handleTextInput(questionId, value) {
+            answers[questionId] = value;
         }
 
         function toggleMultipleAnswer(questionId, value) {
@@ -284,12 +377,33 @@
             } else {
                 answers[questionId].push(value);
             }
-            showSurvey();
+            updateVisibility();
         }
 
         function setRating(questionId, rating) {
+            const oldRating = answers[questionId];
             answers[questionId] = rating;
-            showSurvey();
+            
+            const textEl = document.getElementById('rating-text-' + questionId);
+            if (textEl) {
+                textEl.textContent = rating + ' 分';
+            }
+            
+            const container = document.getElementById('rating-' + questionId);
+            if (container) {
+                const stars = container.querySelectorAll('.star');
+                stars.forEach((star, i) => {
+                    if (i < rating) {
+                        star.classList.add('active');
+                    } else {
+                        star.classList.remove('active');
+                    }
+                });
+            }
+
+            if (oldRating !== rating) {
+                updateVisibility();
+            }
         }
 
         function hoverRating(questionId, rating) {
@@ -325,53 +439,45 @@
             if (!answers[questionId]) {
                 answers[questionId] = {};
             }
+            const oldValue = answers[questionId][row];
             answers[questionId][row] = value;
-            updateVisibility();
-        }
-
-        function updateVisibility() {
-            const visibleQuestions = getVisibleQuestions();
-            const visibleIds = visibleQuestions.map(q => q.id);
-
-            survey.questions.forEach(q => {
-                const block = document.getElementById('question-block-' + q.id);
-                if (block) {
-                    if (visibleIds.includes(q.id)) {
-                        block.classList.remove('hidden');
-                    } else {
-                        block.classList.add('hidden');
-                    }
-                }
-            });
-        }
-
-        function checkShouldEnd() {
-            for (let i = 0; i < survey.questions.length; i++) {
-                const question = survey.questions[i];
-                if (question.logic && question.logic.length > 0) {
-                    const answer = answers[question.id];
-                    for (const rule of question.logic) {
-                        if (rule.action === 'end' && checkLogicCondition(rule, answer)) {
-                            return true;
-                        }
-                    }
-                }
+            
+            if (oldValue !== value) {
+                updateVisibility();
             }
-            return false;
         }
 
         function submitSurvey() {
             if (submitted) return;
 
-            const visibleQuestions = getVisibleQuestions();
+            const { visibleQuestions, endIndex } = getVisibleQuestions();
+            const lastVisibleIndex = endIndex >= 0 ? endIndex : survey.questions.length;
 
-            for (const question of visibleQuestions) {
+            for (let i = 0; i < lastVisibleIndex; i++) {
+                const question = survey.questions[i];
+                
+                const isVisible = visibleQuestions.some(q => q.id === question.id);
+                if (!isVisible) continue;
+
                 if (question.required) {
                     const answer = answers[question.id];
-                    if (answer === undefined || answer === null || answer === '' || 
-                        (Array.isArray(answer) && answer.length === 0) ||
-                        (typeof answer === 'object' && !Array.isArray(answer) && question.type === 'matrix' && Object.keys(answer).length === 0)) {
-                        alert(`请完成第 ${survey.questions.findIndex(q => q.id === question.id) + 1} 题：${question.title}`);
+                    let isEmpty = false;
+                    
+                    if (answer === undefined || answer === null || answer === '') {
+                        isEmpty = true;
+                    } else if (Array.isArray(answer) && answer.length === 0) {
+                        isEmpty = true;
+                    } else if (typeof answer === 'object' && !Array.isArray(answer) && question.type === 'matrix') {
+                        const allRowsAnswered = (question.rows || []).every(row => answer[row] !== undefined);
+                        if (!allRowsAnswered) {
+                            isEmpty = true;
+                        } else if (Object.keys(answer).length === 0) {
+                            isEmpty = true;
+                        }
+                    }
+
+                    if (isEmpty) {
+                        alert(`请完成第 ${i + 1} 题：${question.title}`);
                         const block = document.getElementById('question-block-' + question.id);
                         if (block) {
                             block.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -385,14 +491,16 @@
                 }
             }
 
-            const result = SurveyStore.submitResponse(survey.id, answers);
-            
-            if (result.success) {
-                submitted = true;
-                showSuccessPage();
-            } else {
-                alert('提交失败：' + result.error);
-            }
+            SurveyStore.submitResponse(survey.id, answers).then(result => {
+                if (result.success) {
+                    submitted = true;
+                    showSuccessPage();
+                } else {
+                    alert('提交失败：' + result.error);
+                }
+            }).catch(e => {
+                alert('提交失败：' + e.message);
+            });
         }
 
         function showSuccessPage() {

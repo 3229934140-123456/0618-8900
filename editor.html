@@ -133,19 +133,23 @@
             return urlParams.get(name);
         }
 
-        function initEditor() {
+        async function initEditor() {
             const id = getUrlParam('id');
             if (id) {
                 currentSurveyId = id;
-                const survey = SurveyStore.getSurvey(id);
-                if (survey) {
-                    document.getElementById('surveyTitle').value = survey.title;
-                    document.getElementById('surveyDesc').value = survey.description || '';
-                    questions = survey.questions || [];
-                    surveySettings = { ...survey.settings };
-                    renderQuestions();
-                    updateQuestionCount();
-                    return;
+                try {
+                    const survey = await SurveyStore.getSurvey(id);
+                    if (survey) {
+                        document.getElementById('surveyTitle').value = survey.title;
+                        document.getElementById('surveyDesc').value = survey.description || '';
+                        questions = survey.questions || [];
+                        surveySettings = { ...survey.settings };
+                        renderQuestions();
+                        updateQuestionCount();
+                        return;
+                    }
+                } catch (e) {
+                    alert('加载问卷失败：' + e.message);
                 }
             }
             renderQuestions();
@@ -343,6 +347,8 @@
                 valueOptions = Array.from({length: question.maxRating || 5}, (_, i) => 
                     `<option value="${i + 1}">${i + 1} 分</option>`
                 ).join('');
+            } else if (question.type === 'text') {
+                valueOptions = `<option value="">请输入文本</option>`;
             }
 
             return question.logic.map((rule, ruleIndex) => `
@@ -352,9 +358,14 @@
                         <option value="equals" ${rule.operator === 'equals' ? 'selected' : ''}>等于</option>
                         <option value="contains" ${rule.operator === 'contains' ? 'selected' : ''}>包含</option>
                     </select>
+                    ${['single', 'multiple', 'dropdown', 'rating'].includes(question.type) ? `
                     <select onchange="updateLogicRule('${question.id}', ${ruleIndex}, 'value', this.value)">
                         ${valueOptions}
                     </select>
+                    ` : `
+                    <input type="text" value="${rule.value || ''}" placeholder="输入关键词"
+                           onchange="updateLogicRule('${question.id}', ${ruleIndex}, 'value', this.value)">
+                    `}
                     <span style="font-size: 12px;">则</span>
                     <select onchange="updateLogicRule('${question.id}', ${ruleIndex}, 'action', this.value)">
                         <option value="show" ${rule.action === 'show' ? 'selected' : ''}>显示</option>
@@ -391,6 +402,8 @@
                 firstOption = question.options[0] || '';
             } else if (question.type === 'rating') {
                 firstOption = '1';
+            } else {
+                firstOption = '';
             }
 
             question.logic.push({
@@ -509,7 +522,7 @@
             document.getElementById('questionCount').textContent = `共 ${questions.length} 道题`;
         }
 
-        function saveSurvey() {
+        async function saveSurvey() {
             const title = document.getElementById('surveyTitle').value.trim();
             if (!title) {
                 alert('请输入问卷标题');
@@ -522,23 +535,27 @@
 
             const description = document.getElementById('surveyDesc').value.trim();
 
-            if (currentSurveyId) {
-                SurveyStore.updateSurvey(currentSurveyId, {
-                    title,
-                    description,
-                    questions,
-                    settings: surveySettings
-                });
-                alert('问卷保存成功！');
-            } else {
-                const survey = SurveyStore.createSurvey({
-                    title,
-                    description,
-                    questions,
-                    settings: surveySettings
-                });
-                currentSurveyId = survey.id;
-                alert('问卷创建成功！');
+            try {
+                if (currentSurveyId) {
+                    await SurveyStore.updateSurvey(currentSurveyId, {
+                        title,
+                        description,
+                        questions,
+                        settings: surveySettings
+                    });
+                    alert('问卷保存成功！');
+                } else {
+                    const survey = await SurveyStore.createSurvey({
+                        title,
+                        description,
+                        questions,
+                        settings: surveySettings
+                    });
+                    currentSurveyId = survey.id;
+                    alert('问卷创建成功！');
+                }
+            } catch (e) {
+                alert('保存失败：' + e.message);
             }
         }
 

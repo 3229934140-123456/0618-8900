@@ -1,0 +1,128 @@
+[
+  {
+    "id": "sample_r1",
+    "surveyId": "sample_survey_001",
+    "answers": {
+      "sample_q1": "男",
+      "sample_q2": "26-35岁",
+      "sample_q3": [
+        "朋友推荐",
+        "社交媒体"
+      ],
+      "sample_q4": 5,
+      "sample_q5": "产品很好用，界面也很美观。希望能增加更多自定义功能。",
+      "sample_q6": "数据分析"
+    },
+    "submittedAt": 1781294991194
+  },
+  {
+    "id": "sample_r2",
+    "surveyId": "sample_survey_001",
+    "answers": {
+      "sample_q1": "女",
+      "sample_q2": "18-25岁",
+      "sample_q3": [
+        "搜索引擎",
+        "广告投放"
+      ],
+      "sample_q4": 4,
+      "sample_q5": "整体不错，希望加载速度能更快一些。",
+      "sample_q6": "报表生成"
+    },
+    "submittedAt": 1781381391194
+  },
+  {
+    "id": "sample_r3",
+    "surveyId": "sample_survey_001",
+    "answers": {
+      "sample_q1": "男",
+      "sample_q2": "36-45岁",
+      "sample_q3": [
+        "朋友推荐"
+      ],
+      "sample_q4": 5,
+      "sample_q5": "",
+      "sample_q6": "用户管理"
+    },
+    "submittedAt": 1781467791194
+  },
+  {
+    "id": "sample_r4",
+    "surveyId": "sample_survey_001",
+    "answers": {
+      "sample_q1": "女",
+      "sample_q2": "26-35岁",
+      "sample_q3": [
+        "社交媒体",
+        "线下活动"
+      ],
+      "sample_q4": 3,
+      "sample_q5": "功能还可以，但价格有点贵。",
+      "sample_q6": "数据分析"
+    },
+    "submittedAt": 1781554191194
+  },
+  {
+    "id": "sample_r5",
+    "surveyId": "sample_survey_001",
+    "answers": {
+      "sample_q1": "男",
+      "sample_q2": "46岁以上",
+      "sample_q3": [
+        "广告投放"
+      ],
+      "sample_q4": 4,
+      "sample_q5": "界面简洁明了，容易上手。",
+      "sample_q6": "系统设置"
+    },
+    "submittedAt": 1781640591194
+  },
+  {
+    "id": "sample_r6",
+    "surveyId": "sample_survey_001",
+    "answers": {
+      "sample_q1": "女",
+      "sample_q2": "18-25岁",
+      "sample_q3": [
+        "朋友推荐",
+        "社交媒体",
+        "搜索引擎"
+      ],
+      "sample_q4": 5,
+      "sample_q5": "非常喜欢！希望能推出更多新功能。",
+      "sample_q6": "报表生成"
+    },
+    "submittedAt": 1781683791194
+  },
+  {
+    "id": "sample_r7",
+    "surveyId": "sample_survey_001",
+    "answers": {
+      "sample_q1": "男",
+      "sample_q2": "26-35岁",
+      "sample_q3": [
+        "其他"
+      ],
+      "sample_q4": 2,
+      "sample_q5": "有些功能不太好找，希望能优化一下导航。",
+      "sample_q6": "其他"
+    },
+    "submittedAt": 1781705391194
+  },
+  {
+    "id": "sample_r8",
+    "surveyId": "sample_survey_001",
+    "answers": {
+      "sample_q1": "女",
+      "sample_q2": "36-45岁",
+      "sample_q3": [
+        "朋友推荐",
+        "广告投放"
+      ],
+      "sample_q4": 4,
+      "sample_q5": "",
+      "sample_q6": "用户管理"
+    },
+    "submittedAt": 1781719791194
+  }
+]

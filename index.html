@@ -27,7 +27,11 @@
             </div>
         </div>
 
-        <div id="surveyList" class="survey-list"></div>
+        <div id="surveyList" class="survey-list">
+            <div style="grid-column: 1/-1; text-align: center; padding: 40px; color: #888;">
+                加载中...
+            </div>
+        </div>
 
         <div id="emptyState" class="card empty-state" style="display: none;">
             <div class="icon">📝</div>
@@ -67,7 +71,7 @@
                     <button class="btn btn-primary btn-sm" onclick="copyShareUrl()">复制</button>
                 </div>
                 <p style="font-size: 13px; color: #888; margin-top: 8px;">
-                    将此链接分享给答题者，他们可以通过链接直接访问问卷
+                    将此链接分享给答题者，他们可以通过链接直接访问问卷。支持跨设备、跨浏览器访问。
                 </p>
             </div>
             <div id="embedTab" class="tab-content">
@@ -75,7 +79,7 @@
                 <div class="embed-code" id="embedCode"></div>
                 <button class="btn btn-primary btn-sm" onclick="copyEmbedCode()">复制代码</button>
                 <p style="font-size: 13px; color: #888; margin-top: 8px;">
-                    将此代码嵌入到你的网站或博客中，用户可以直接在页面上填写问卷
+                    将此代码嵌入到你的网站或博客中，用户可以直接在页面上填写问卷，数据会实时同步到后台。
                 </p>
             </div>
         </div>
@@ -85,36 +89,56 @@
     <script>
         let deleteSurveyId = null;
         let shareSurveyId = null;
+        let surveyListCache = [];
 
-        function loadSurveys() {
-            const surveys = SurveyStore.getSurveys();
+        async function loadSurveys() {
+            try {
+                const surveys = await SurveyStore.getSurveys();
+                surveyListCache = surveys || [];
+                renderSurveyList(surveyListCache);
+            } catch (e) {
+                console.error('加载问卷列表失败:', e);
+                document.getElementById('surveyList').innerHTML = `
+                    <div style="grid-column: 1/-1; text-align: center; padding: 40px; color: #ff4d4f;">
+                        加载失败，请刷新页面重试
+                    </div>
+                `;
+            }
+        }
+
+        async function renderSurveyList(surveys) {
             const listEl = document.getElementById('surveyList');
             const emptyEl = document.getElementById('emptyState');
 
-            if (surveys.length === 0) {
+            if (!surveys || surveys.length === 0) {
                 listEl.innerHTML = '';
                 emptyEl.style.display = 'block';
                 return;
             }
 
             emptyEl.style.display = 'none';
-            listEl.innerHTML = surveys.map(survey => {
-                const status = SurveyStore.getSurveyStatus(survey);
-                const count = SurveyStore.getResponseCount(survey.id);
+            
+            const surveysWithStatus = await Promise.all(surveys.map(async (survey) => {
+                const status = await SurveyStore.getSurveyStatus(survey.id);
+                const count = await SurveyStore.getResponseCount(survey.id);
+                return { ...survey, status, count };
+            }));
+
+            listEl.innerHTML = surveysWithStatus.map(survey => {
                 const statusColor = {
                     active: '#52c41a',
                     pending: '#faad14',
                     ended: '#999',
                     full: '#ff4d4f'
-                }[status.status];
+                }[survey.status?.status] || '#999';
 
                 return `
                     <div class="survey-card">
                         <h3>${escapeHtml(survey.title)}</h3>
                         <p class="desc">${escapeHtml(survey.description || '暂无描述')}</p>
                         <div class="meta">
-                            <span style="color: ${statusColor};">● ${status.label}</span>
-                            <span>${count} 份答卷</span>
+                            <span style="color: ${statusColor};">● ${survey.status?.label || '未知'}</span>
+                            <span>${survey.count} 份答卷</span>
                         </div>
                         <div class="actions">
                             <button class="btn btn-secondary btn-sm" onclick="editSurvey('${survey.id}')">编辑</button>
@@ -184,11 +208,15 @@
             deleteSurveyId = null;
         }
 
-        function confirmDelete() {
+        async function confirmDelete() {
             if (deleteSurveyId) {
-                SurveyStore.deleteSurvey(deleteSurveyId);
-                closeDeleteModal();
-                loadSurveys();
+                try {
+                    await SurveyStore.deleteSurvey(deleteSurveyId);
+                    closeDeleteModal();
+                    await loadSurveys();
+                } catch (e) {
+                    alert('删除失败：' + e.message);
+                }
             }
         }
 
@@ -198,9 +226,9 @@
             return div.innerHTML;
         }
 
-        document.addEventListener('DOMContentLoaded', function() {
-            SurveyStore.initSampleData();
-            loadSurveys();
+        document.addEventListener('DOMContentLoaded', async function() {
+            await SurveyStore.initSampleData();
+            await loadSurveys();
         });
 
         document.getElementById('deleteModal').addEventListener('click', function(e) {

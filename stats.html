@@ -18,12 +18,17 @@
     </div>
 
     <div class="container">
-        <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="card" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
             <div>
                 <h2 id="surveyTitle">加载中...</h2>
                 <p id="surveyDesc" style="color: #888; margin-top: 4px;"></p>
             </div>
-            <div style="display: flex; gap: 10px;">
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <div id="autoRefreshStatus" style="font-size: 13px; color: #52c41a; display: flex; align-items: center; gap: 6px;">
+                    <span style="display: inline-block; width: 8px; height: 8px; background: #52c41a; border-radius: 50%; animation: pulse 2s infinite;"></span>
+                    实时更新中
+                </div>
+                <span id="lastUpdateTime" style="font-size: 12px; color: #999;"></span>
                 <button class="btn btn-secondary" onclick="window.location.href='index.html'">返回</button>
                 <button class="btn btn-success" onclick="exportData()">📥 导出Excel</button>
             </div>
@@ -78,19 +83,29 @@
         </div>
     </div>
 
+    <style>
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+
     <script src="js/store.js"></script>
     <script>
         let survey = null;
         let stats = null;
+        let allResponses = [];
         let filteredResponses = [];
         let currentFilter = null;
+        let autoRefreshInterval = null;
+        let lastResponseCount = 0;
 
         function getUrlParam(name) {
             const urlParams = new URLSearchParams(window.location.search);
             return urlParams.get(name);
         }
 
-        function init() {
+        async function init() {
             const surveyId = getUrlParam('id');
             if (!surveyId) {
                 alert('问卷不存在');
@@ -98,23 +113,73 @@
                 return;
             }
 
-            survey = SurveyStore.getSurvey(surveyId);
-            if (!survey) {
-                alert('问卷不存在');
-                window.location.href = 'index.html';
-                return;
+            try {
+                survey = await SurveyStore.getSurvey(surveyId);
+                if (!survey) {
+                    alert('问卷不存在');
+                    window.location.href = 'index.html';
+                    return;
+                }
+
+                document.getElementById('surveyTitle').textContent = survey.title;
+                document.getElementById('surveyDesc').textContent = survey.description || '';
+
+                populateFilterQuestion();
+                await loadData();
+                startAutoRefresh();
+            } catch (e) {
+                alert('加载失败：' + e.message);
             }
+        }
 
-            document.getElementById('surveyTitle').textContent = survey.title;
-            document.getElementById('surveyDesc').textContent = survey.description || '';
+        async function loadData() {
+            try {
+                const responses = await SurveyStore.getSurveyResponses(survey.id);
+                allResponses = responses || [];
 
-            stats = SurveyStore.calculateStats(surveyId);
-            filteredResponses = SurveyStore.getSurveyResponses(surveyId);
+                if (allResponses.length !== lastResponseCount) {
+                    stats = SurveyStore.calculateStats(survey, allResponses);
+                    
+                    if (currentFilter) {
+                        filteredResponses = SurveyStore.filterResponses(allResponses, {
+                            [currentFilter.questionId]: { type: 'equals', value: currentFilter.value }
+                        });
+                    } else {
+                        filteredResponses = allResponses;
+                    }
 
-            renderStatsGrid();
-            renderCharts();
-            populateFilterQuestion();
-            renderResponses();
+                    renderStatsGrid();
+                    renderCharts();
+                    renderResponses();
+                    
+                    lastResponseCount = allResponses.length;
+                    updateLastUpdateTime();
+                }
+            } catch (e) {
+                console.error('刷新数据失败:', e);
+            }
+        }
+
+        function updateLastUpdateTime() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            document.getElementById('lastUpdateTime').textContent = `最后更新: ${timeStr}`;
+        }
+
+        function startAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+            autoRefreshInterval = setInterval(() => {
+                loadData();
+            }, 3000);
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+            }
         }
 
         function switchTab(tab) {
@@ -125,8 +190,8 @@
         }
 
         function renderStatsGrid() {
-            const responses = SurveyStore.getSurveyResponses(survey.id);
-            const status = SurveyStore.getSurveyStatus(survey);
+            const responses = allResponses;
+            const status = SurveyStore.getSurveyStatus(survey.id);
             
             let completionRate = 0;
             if (responses.length > 0) {
@@ -158,6 +223,7 @@
                 <div class="stat-card">
                     <h3>总答卷数</h3>
                     <div class="value primary">${responses.length}</div>
+                    ${lastResponseCount > 0 ? `<div style="font-size: 12px; color: #52c41a; margin-top: 4px;">● 实时更新</div>` : ''}
                 </div>
                 <div class="stat-card">
                     <h3>题目数量</h3>
@@ -332,7 +398,7 @@
             if (!questionId) {
                 valueGroup.style.display = 'none';
                 currentFilter = null;
-                filteredResponses = SurveyStore.getSurveyResponses(survey.id);
+                filteredResponses = allResponses;
                 renderResponses();
                 return;
             }
@@ -356,11 +422,11 @@
             const value = document.getElementById('filterValue').value;
 
             if (!questionId || !value) {
-                filteredResponses = SurveyStore.getSurveyResponses(survey.id);
+                filteredResponses = allResponses;
                 currentFilter = null;
             } else {
                 currentFilter = { questionId, value };
-                filteredResponses = SurveyStore.filterResponses(survey.id, {
+                filteredResponses = SurveyStore.filterResponses(allResponses, {
                     [questionId]: { type: 'equals', value }
                 });
             }
@@ -373,7 +439,7 @@
             document.getElementById('filterValue').value = '';
             document.getElementById('filterValueGroup').style.display = 'none';
             currentFilter = null;
-            filteredResponses = SurveyStore.getSurveyResponses(survey.id);
+            filteredResponses = allResponses;
             renderResponses();
         }
 
@@ -433,16 +499,18 @@
             });
 
             html += '</tbody></table>';
-            html += `<div style="margin-top: 16px; color: #888; font-size: 13px;">
-                共 ${filteredResponses.length} 条答卷
+            html += `<div style="margin-top: 16px; color: #888; font-size: 13px; display: flex; justify-content: space-between; align-items: center;">
+                <span>共 ${filteredResponses.length} 条答卷
                 ${currentFilter ? '（已筛选）' : ''}
+                </span>
+                <span style="color: #52c41a;">● 实时自动刷新</span>
             </div>`;
 
             container.innerHTML = html;
         }
 
         function viewResponseDetail(responseId) {
-            const response = SurveyStore.getResponse(responseId);
+            const response = allResponses.find(r => r.id === responseId);
             if (!response) return;
 
             let html = `
@@ -459,11 +527,9 @@
                     if (Array.isArray(answer)) {
                         displayAnswer = answer.join('、');
                     } else if (typeof answer === 'object' && question.type === 'matrix') {
-                        displayAnswer = Object.entries(answer)
-                            .map(([row, val]) => `${row}: ${val}`)
-                            .join('；');
+                        displayAnswer = '；'.join([`${k}:${v}` for k, v in Object.entries(answer)]);
                     } else if (question.type === 'rating') {
-                        displayAnswer = answer + ' 分';
+                        displayAnswer = `${answer} 分`;
                     } else {
                         displayAnswer = String(answer);
                     }
@@ -488,23 +554,10 @@
         }
 
         function exportData() {
-            const csvContent = SurveyStore.exportToCSV(survey.id, filteredResponses);
-            if (!csvContent) {
-                alert('导出失败');
-                return;
+            const filterInfo = currentFilter ? `（已筛选）` : '';
+            if (confirm(`确定要导出 ${filteredResponses.length} 条答卷数据${filterInfo}吗？`)) {
+                SurveyStore.exportToExcel(survey.id);
             }
-
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement('a');
-            const url = URL.createObjectURL(blob);
-            link.setAttribute('href', url);
-            link.setAttribute('download', `${survey.title}_答卷数据.csv`);
-            link.style.visibility = 'hidden';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-
-            alert('导出成功！\n\n说明：CSV格式可直接用Excel打开。如需标准Excel格式，可在Excel中"另存为" .xlsx 格式。');
         }
 
         function escapeHtml(text) {
@@ -516,6 +569,19 @@
 
         document.addEventListener('DOMContentLoaded', function() {
             init();
+        });
+
+        window.addEventListener('beforeunload', function() {
+            stopAutoRefresh();
+        });
+
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stopAutoRefresh();
+            } else {
+                startAutoRefresh();
+                loadData();
+            }
         });
 
         document.getElementById('responseDetailModal').addEventListener('click', function(e) {
